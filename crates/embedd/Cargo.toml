@@ -1,0 +1,78 @@
+[package]
+name = "embedd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Embedding interfaces + local backends (Candle/HF)."
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+innr.workspace = true
+once_cell.workspace = true
+serde_json.workspace = true
+clap = { workspace = true, optional = true, features = ["derive"] }
+
+# Optional: HTTP client adapters
+serde = { workspace = true, optional = true, features = ["derive"] }
+ureq = { workspace = true, optional = true }
+
+# Optional: fastembed backend
+fastembed = { workspace = true, optional = true }
+
+# Optional: ONNX Runtime backend
+ort = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+
+# Optional: burn backend
+burn = { workspace = true, optional = true }
+
+# Optional: HuggingFace + Candle stack
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[[bench]]
+name = "embedd_bench"
+harness = false
+
+[features]
+default = []
+# Local model inference (HF Hub + Candle).
+candle-hf = [
+  "dep:candle-core",
+  "dep:candle-nn",
+  "dep:candle-transformers",
+  "dep:hf-hub",
+  "dep:tokenizers",
+]
+
+# Adapter backends (all inside this crate; keeps `embedd` as the only public crate name).
+openai = ["dep:ureq", "dep:serde"]
+tei = ["dep:ureq"]
+hf-inference = ["dep:ureq", "dep:serde"]
+fastembed = ["dep:fastembed"]
+ort-tokenizers = ["dep:ort", "dep:tokenizers"]
+burn-backend = ["dep:burn"]
+siglip = []
+
+# Minimal CLI for local validation (feature-gated to keep the crate lean by default).
+cli = ["dep:clap"]
+
+# Convenience "everything" feature for local dev.
+all = ["candle-hf", "openai", "tei", "hf-inference", "fastembed", "ort-tokenizers", "burn-backend", "siglip"]
+
+[[bin]]
+name = "embedd"
+path = "src/bin/embedd.rs"
+required-features = ["cli"]
+

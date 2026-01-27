@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/embedd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+authors = ["Arc <attobop@gmail.com>"]
+repository = "https://github.com/arclabs561/embedd"
+homepage = "https://github.com/arclabs561/embedd"
+documentation = "https://docs.rs/embedd"
+
+[workspace.dependencies]
+# Workspace crate
+embedd = { path = "crates/embedd", version = "0.1.0" }
+
+# External deps (pinned for publishable, reproducible builds)
+anyhow = "1.0"
+once_cell = "1.19"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "2.10", features = ["json"] }
+clap = "4.5"
+proptest = "1.9"
+criterion = "0.7"
+
+# ML stacks (all optional at the crate level; pinned here)
+tokenizers = "0.22"
+hf-hub = "0.4"
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+ort = "2.0.0-rc.11"
+burn = "0.20.0"
+fastembed = "5.8.1"
+
+# Tekne primitive (published separately; used by `embedd::vector`)
+innr = "0.1.0"
+
+[patch.crates-io]
+# When developing in this repo, use the local workspace crates instead of crates.io.
+# (This keeps `Cargo.toml` publishable: deps are versioned, patch is only for local resolution.)
+embedd = { path = "crates/embedd" }
