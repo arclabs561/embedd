@@ -6,7 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Embedding interfaces + local backends (Candle/HF)."
-repository.workspace = true
+repository = "https://github.com/arclabs561/embedd"
+homepage = "https://github.com/arclabs561/embedd"
+documentation = "https://docs.rs/embedd"
+readme = "README.md"
+keywords = ["embeddings", "nlp", "inference", "candle"]
+categories = ["science", "text-processing"]
 
 [dependencies]
 anyhow.workspace = true
