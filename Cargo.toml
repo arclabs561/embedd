@@ -39,7 +39,7 @@ burn = "0.20.0"
 fastembed = "5.8.1"
 
 # Tekne primitive (published separately; used by `embedd::vector`)
-innr = "0.1.0"
+innr = "0.1.8"
 
 [patch.crates-io]
 # When developing in this repo, use the local workspace crates instead of crates.io.
