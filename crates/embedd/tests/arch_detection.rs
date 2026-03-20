@@ -131,6 +131,23 @@ fn missing_model_type_defaults_to_bert() {
 }
 
 #[test]
+fn stella_400m_variant_detected_by_hidden_size() {
+    // Stella variant detection uses hidden_size, not model_type.
+    // 400M: hidden_size=1024, 1.5B: hidden_size=1536.
+    let cfg_400m = serde_json::json!({
+        "model_type": "new",
+        "hidden_size": 1024,
+    });
+    assert_eq!(cfg_400m.get("hidden_size").unwrap().as_u64().unwrap(), 1024);
+
+    let cfg_1_5b = serde_json::json!({
+        "model_type": "qwen2",
+        "hidden_size": 1536,
+    });
+    assert_eq!(cfg_1_5b.get("hidden_size").unwrap().as_u64().unwrap(), 1536);
+}
+
+#[test]
 fn bert_with_absolute_position_is_not_jina() {
     let cfg = serde_json::json!({
         "model_type": "bert",
