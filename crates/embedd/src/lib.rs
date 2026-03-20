@@ -2461,9 +2461,17 @@ mod candle_hf {
             Ok(m.lock().expect("embedder mutex poisoned"))
         }
 
-        fn embed_texts_inner(&self, texts: &[String], is_query: bool) -> Result<Vec<Vec<f32>>> {
+        /// Tokenize, pad, and run the forward pass. Returns the raw hidden states
+        /// `[bsz, seq, hidden]`, the attention mask `[bsz, seq]`, and per-input
+        /// real token counts (before padding).
+        fn forward_inner(
+            &self,
+            texts: &[String],
+            is_query: bool,
+        ) -> Result<(Tensor, Tensor, Vec<usize>)> {
             let mut toks = Vec::with_capacity(texts.len());
             let mut masks = Vec::with_capacity(texts.len());
+            let mut real_lens = Vec::with_capacity(texts.len());
             let mut max_seq = 0usize;
 
             for t in texts {
@@ -2482,6 +2490,7 @@ mod candle_hf {
                 let len = ids.len().min(self.max_len);
                 let ids: Vec<u32> = ids[..len].to_vec();
                 let mask: Vec<u32> = mask[..len].to_vec();
+                real_lens.push(len);
                 max_seq = max_seq.max(ids.len());
                 toks.push(ids);
                 masks.push(mask);
@@ -2509,8 +2518,12 @@ mod candle_hf {
                 Tensor::from_vec(flat_mask, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
             let token_type_ids = Tensor::zeros((bsz, max_seq), DType::I64, &self.device)?;
 
-            // Dispatch to architecture-specific forward pass.
             let ys = self.model.forward(&input_ids, &token_type_ids, &attention_mask)?;
+            Ok((ys, attention_mask, real_lens))
+        }
+
+        fn embed_texts_inner(&self, texts: &[String], is_query: bool) -> Result<Vec<Vec<f32>>> {
+            let (ys, attention_mask, _) = self.forward_inner(texts, is_query)?;
 
             // Mean-pool with attention mask, then L2 normalize.
             let ys = ys.to_dtype(DType::F32)?;
@@ -2529,6 +2542,23 @@ mod candle_hf {
             let normed = pooled.broadcast_div(&norms)?;
 
             Ok(normed.to_vec2()?)
+        }
+
+        fn embed_tokens_inner(
+            &self,
+            texts: &[String],
+            is_query: bool,
+        ) -> Result<Vec<Vec<Vec<f32>>>> {
+            let (ys, _attention_mask, real_lens) = self.forward_inner(texts, is_query)?;
+            let ys = ys.to_dtype(DType::F32)?;
+
+            // Extract per-token vectors, stripping padding.
+            let all: Vec<Vec<Vec<f32>>> = ys.to_vec3()?;
+            Ok(all
+                .into_iter()
+                .zip(real_lens)
+                .map(|(token_vecs, real_len)| token_vecs[..real_len].to_vec())
+                .collect())
         }
     }
 
@@ -2554,6 +2584,16 @@ mod candle_hf {
                     direction: super::TruncationDirection::Right,
                 },
             }
+        }
+    }
+
+    impl super::TokenEmbedder for LocalHfEmbedder {
+        fn embed_tokens(
+            &self,
+            texts: &[String],
+            mode: EmbedMode,
+        ) -> Result<Vec<Vec<Vec<f32>>>> {
+            self.embed_tokens_inner(texts, matches!(mode, EmbedMode::Query))
         }
     }
 
