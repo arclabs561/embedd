@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/embedd",
+  "crates/embedd-qdrant",
 ]
 
 [workspace.package]
@@ -39,6 +40,9 @@ candle-transformers = "0.9"
 ort = "2.0.0-rc.11"
 burn = "0.20.0"
 fastembed = "5.8.1"
+
+# Vector DB client
+qdrant-client = "1.16"
 
 # Tekne primitive (published separately; used by `embedd::vector`)
 innr = "0.1.8"
