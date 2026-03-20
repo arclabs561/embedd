@@ -2452,22 +2452,13 @@ dependencies = [
  "ort",
  "predicates",
  "proptest",
+ "qdrant-client",
  "reqwest",
  "serde",
  "serde_json",
  "tokenizers",
  "tokio",
  "ureq 2.12.1",
-]
-
-[[package]]
-name = "embedd-qdrant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "embedd",
- "qdrant-client",
- "tokio",
 ]
 
 [[package]]

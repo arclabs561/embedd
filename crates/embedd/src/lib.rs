@@ -20,6 +20,13 @@
 //!
 //! Legacy `IKSH_*` equivalents are supported as fallback via `from_env_any()` but deprecated.
 
+// ---------------------------------------------------------------------------
+// Qdrant integration (feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "qdrant")]
+pub mod qdrant;
+
 /// Whether an embedding is for a query or a document/passage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

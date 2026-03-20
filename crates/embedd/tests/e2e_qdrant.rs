@@ -77,7 +77,7 @@ async fn embed_upsert_and_search_roundtrip() {
         "the sun shone brightly".to_string(),
     ];
 
-    embedd_qdrant::embed_and_upsert(
+    embedd::qdrant::embed_and_upsert(
         &client,
         collection,
         &embedder,
@@ -89,7 +89,7 @@ async fn embed_upsert_and_search_roundtrip() {
     .expect("upsert failed");
 
     // Search.
-    let results = embedd_qdrant::embed_and_search(&client, collection, &embedder, "cat mat", 3)
+    let results = embedd::qdrant::embed_and_search(&client, collection, &embedder, "cat mat", 3)
         .await
         .expect("search failed");
 
@@ -137,7 +137,7 @@ async fn embed_and_upsert_empty_is_noop() {
     let embedder = FixedDimEmbedder { dim: 32 };
 
     // Empty upsert should succeed without creating/needing a collection.
-    embedd_qdrant::embed_and_upsert(
+    embedd::qdrant::embed_and_upsert(
         &client,
         "nonexistent_collection",
         &embedder,

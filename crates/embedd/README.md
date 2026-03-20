@@ -31,6 +31,7 @@ dependents only pull what they need.
 | Feature         | What it does                     |
 |-----------------|----------------------------------|
 | `serde`         | Serde derives on core types      |
+| `qdrant`        | Qdrant vector DB integration     |
 | `ort-tokenizers`| ONNX Runtime (stub)              |
 | `burn-backend`  | Burn (stub)                      |
 | `siglip`        | SigLIP image (stub)              |
