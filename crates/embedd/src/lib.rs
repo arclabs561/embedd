@@ -588,11 +588,7 @@ pub trait AsyncTextEmbedder: Send + Sync {
         mode: EmbedMode,
     ) -> BoxFuture<'_, anyhow::Result<Vec<Vec<f32>>>>;
 
-    fn embed_text(
-        &self,
-        text: &str,
-        mode: EmbedMode,
-    ) -> BoxFuture<'_, anyhow::Result<Vec<f32>>> {
+    fn embed_text(&self, text: &str, mode: EmbedMode) -> BoxFuture<'_, anyhow::Result<Vec<f32>>> {
         let text = text.to_string();
         Box::pin(async move {
             self.embed_texts(&[text], mode)
@@ -1379,10 +1375,9 @@ pub mod fastembed {
             if let Some(existing) = guard.get(&key) {
                 return Ok(Arc::clone(existing));
             }
-            let opts = fastembed::SparseInitOptions::new(model_name)
-                .with_show_download_progress(false);
-            let model =
-                SparseTextEmbedding::try_new(opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let opts =
+                fastembed::SparseInitOptions::new(model_name).with_show_download_progress(false);
+            let model = SparseTextEmbedding::try_new(opts).map_err(|e| anyhow::anyhow!("{e}"))?;
             let arc = Arc::new(Mutex::new(model));
             guard.insert(key, Arc::clone(&arc));
             Ok(arc)
@@ -1394,11 +1389,7 @@ pub mod fastembed {
     }
 
     impl SparseEmbedder for FastembedSparseEmbedder {
-        fn embed_sparse(
-            &self,
-            texts: &[String],
-            _mode: EmbedMode,
-        ) -> Result<Vec<Vec<(u32, f32)>>> {
+        fn embed_sparse(&self, texts: &[String], _mode: EmbedMode) -> Result<Vec<Vec<(u32, f32)>>> {
             let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
             let mut guard = self.model.lock().expect("sparse model mutex poisoned");
             let sparse = guard
@@ -1734,10 +1725,7 @@ pub mod async_hf_inference {
             Self::new_with_base_url(model, "https://api-inference.huggingface.co")
         }
 
-        pub fn new_with_base_url(
-            model: impl Into<String>,
-            base_url: impl Into<String>,
-        ) -> Self {
+        pub fn new_with_base_url(model: impl Into<String>, base_url: impl Into<String>) -> Self {
             Self {
                 base_url: base_url.into().trim_end_matches('/').to_string(),
                 token: std::env::var("HF_API_TOKEN").ok(),
@@ -1765,10 +1753,9 @@ pub mod async_hf_inference {
     fn mean_pool(v: &serde_json::Value) -> Result<Vec<f32>> {
         fn as_flat(v: &serde_json::Value) -> Option<Vec<f32>> {
             match v {
-                serde_json::Value::Array(xs) if xs.iter().all(|x| x.is_number()) => xs
-                    .iter()
-                    .map(|x| x.as_f64().map(|f| f as f32))
-                    .collect(),
+                serde_json::Value::Array(xs) if xs.iter().all(|x| x.is_number()) => {
+                    xs.iter().map(|x| x.as_f64().map(|f| f as f32)).collect()
+                }
                 _ => None,
             }
         }
@@ -2191,18 +2178,12 @@ mod candle_hf {
 
     // Architecture-specific model types from candle-transformers.
     use candle_transformers::models::bert::{BertModel, Config as BertConfig};
-    use candle_transformers::models::distilbert::{
-        Config as DistilBertConfig, DistilBertModel,
-    };
+    use candle_transformers::models::distilbert::{Config as DistilBertConfig, DistilBertModel};
     use candle_transformers::models::jina_bert::{
         BertModel as JinaBertModel, Config as JinaBertConfig,
     };
-    use candle_transformers::models::xlm_roberta::{
-        Config as XlmRobertaConfig, XLMRobertaModel,
-    };
-    use candle_transformers::models::modernbert::{
-        Config as ModernBertConfig, ModernBert,
-    };
+    use candle_transformers::models::modernbert::{Config as ModernBertConfig, ModernBert};
+    use candle_transformers::models::xlm_roberta::{Config as XlmRobertaConfig, XLMRobertaModel};
     // Stella v5 is not auto-detectable via model_type ("new" for 400M, "qwen2" for 1.5B).
     // It also needs two VarBuilders (base + embed head from separate safetensors files).
     // Supported via dedicated StellaEmbedder struct, not the generic LocalHfEmbedder path.
@@ -2257,10 +2238,7 @@ mod candle_hf {
 
     /// Detect architecture from the raw config.json.
     fn detect_arch(config_json: &serde_json::Value) -> ModelArch {
-        match config_json
-            .get("model_type")
-            .and_then(|v| v.as_str())
-        {
+        match config_json.get("model_type").and_then(|v| v.as_str()) {
             Some("distilbert") => ModelArch::DistilBert,
             Some("xlm-roberta") => ModelArch::XlmRoberta,
             Some("modernbert") => ModelArch::ModernBert,
@@ -2518,7 +2496,9 @@ mod candle_hf {
                 Tensor::from_vec(flat_mask, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
             let token_type_ids = Tensor::zeros((bsz, max_seq), DType::I64, &self.device)?;
 
-            let ys = self.model.forward(&input_ids, &token_type_ids, &attention_mask)?;
+            let ys = self
+                .model
+                .forward(&input_ids, &token_type_ids, &attention_mask)?;
             Ok((ys, attention_mask, real_lens))
         }
 
@@ -2588,11 +2568,7 @@ mod candle_hf {
     }
 
     impl super::TokenEmbedder for LocalHfEmbedder {
-        fn embed_tokens(
-            &self,
-            texts: &[String],
-            mode: EmbedMode,
-        ) -> Result<Vec<Vec<Vec<f32>>>> {
+        fn embed_tokens(&self, texts: &[String], mode: EmbedMode) -> Result<Vec<Vec<Vec<f32>>>> {
             self.embed_tokens_inner(texts, matches!(mode, EmbedMode::Query))
         }
     }
@@ -2687,8 +2663,7 @@ mod candle_hf {
             };
 
             let model = StellaEmbeddingModel::new(&cfg, base_vb, embed_vb)?;
-            let tokenizer =
-                Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let tokenizer = Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             Ok(Self {
                 model: std::sync::Mutex::new(model),
@@ -2732,8 +2707,7 @@ mod candle_hf {
             };
 
             let model = StellaEmbeddingModel::new(&cfg, base_vb, embed_vb)?;
-            let tokenizer =
-                Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let tokenizer = Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             Ok(Self {
                 model: std::sync::Mutex::new(model),

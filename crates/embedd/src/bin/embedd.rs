@@ -160,9 +160,9 @@ fn make_backend(cli: &Cli) -> anyhow::Result<Box<dyn TextEmbedder>> {
                     .map_err(|_| anyhow::anyhow!("missing EMBEDD_OPENAI_API_KEY"))?;
                 let model = std::env::var("EMBEDD_OPENAI_MODEL")
                     .map_err(|_| anyhow::anyhow!("missing EMBEDD_OPENAI_MODEL"))?;
-                Ok(Box::new(embedd::openai::OpenAiEmbedder::new(
-                    base_url, api_key, model,
-                )))
+                Ok(Box::new(
+                    embedd::openai::OpenAiEmbedder::new(api_key, model).with_base_url(base_url),
+                ))
             }
             #[cfg(not(feature = "openai"))]
             {
