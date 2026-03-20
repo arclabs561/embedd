@@ -4,9 +4,7 @@
 //! Skips gracefully if Qdrant is not available.
 
 use embedd::{EmbedMode, TextEmbedder};
-use qdrant_client::qdrant::{
-    CreateCollectionBuilder, Distance, VectorParamsBuilder,
-};
+use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParamsBuilder};
 use qdrant_client::Qdrant;
 
 /// Stub embedder for deterministic testing (no model download needed).
@@ -43,9 +41,7 @@ impl TextEmbedder for FixedDimEmbedder {
 }
 
 async fn qdrant_client() -> Option<Qdrant> {
-    let client = Qdrant::from_url("http://localhost:6334")
-        .build()
-        .ok()?;
+    let client = Qdrant::from_url("http://localhost:6334").build().ok()?;
     // Quick health check.
     client.health_check().await.ok()?;
     Some(client)
@@ -81,9 +77,16 @@ async fn embed_upsert_and_search_roundtrip() {
         "the sun shone brightly".to_string(),
     ];
 
-    embedd_qdrant::embed_and_upsert(&client, collection, &embedder, &docs, 0, EmbedMode::Document)
-        .await
-        .expect("upsert failed");
+    embedd_qdrant::embed_and_upsert(
+        &client,
+        collection,
+        &embedder,
+        &docs,
+        0,
+        EmbedMode::Document,
+    )
+    .await
+    .expect("upsert failed");
 
     // Search.
     let results = embedd_qdrant::embed_and_search(&client, collection, &embedder, "cat mat", 3)
@@ -114,11 +117,7 @@ async fn embed_upsert_and_search_roundtrip() {
     // Verify scores are sorted descending.
     let scores: Vec<f32> = results.result.iter().map(|r| r.score).collect();
     for w in scores.windows(2) {
-        assert!(
-            w[0] >= w[1],
-            "scores not sorted descending: {:?}",
-            scores
-        );
+        assert!(w[0] >= w[1], "scores not sorted descending: {:?}", scores);
     }
 
     // Clean up.
