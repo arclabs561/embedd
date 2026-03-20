@@ -2,6 +2,10 @@
 //!
 //! Requires Qdrant running on localhost:6334 (gRPC port).
 //! Skips gracefully if Qdrant is not available.
+//!
+//! Only compiles with the `qdrant` feature enabled.
+
+#![cfg(feature = "qdrant")]
 
 use embedd::{EmbedMode, TextEmbedder};
 use qdrant_client::qdrant::{CreateCollectionBuilder, Distance, VectorParamsBuilder};
