@@ -89,11 +89,13 @@ Compose via `apply_scoping_policy`, `apply_normalization_policy`, `apply_output_
 
 The `candle-hf` backend auto-detects model architecture from `config.json`:
 
-| `model_type`  | Architecture | Notes                          |
-|---------------|--------------|--------------------------------|
-| `bert`        | BERT         | default fallback               |
-| `bert` + ALiBi| JinaBERT     | detected via position_embedding_type |
-| `distilbert`  | DistilBERT   | no token_type_ids              |
+| `model_type`   | Architecture | Notes                          |
+|----------------|--------------|--------------------------------|
+| `bert`         | BERT         | default fallback               |
+| `bert` + ALiBi | JinaBERT     | detected via position_embedding_type |
+| `distilbert`   | DistilBERT   | no token_type_ids              |
+| `xlm-roberta`  | XLM-RoBERTa  | multilingual                   |
+| `modernbert`   | ModernBERT   | RoPE, sliding window attention |
 
 ## Related crates
 

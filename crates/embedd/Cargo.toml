@@ -96,6 +96,18 @@ all = [
 name = "hello_embed"
 required-features = ["fastembed"]
 
+[[example]]
+name = "semantic_search"
+required-features = ["fastembed"]
+
+[[example]]
+name = "sparse_retrieval"
+required-features = ["fastembed"]
+
+[[example]]
+name = "batched_embed"
+required-features = ["fastembed"]
+
 [[bin]]
 name = "embedd"
 path = "src/bin/embedd.rs"
