@@ -283,6 +283,49 @@ pub fn apply_output_dim<E: TextEmbedder + 'static>(
     }
 }
 
+/// Wrapper that splits large batches into fixed-size chunks before delegating.
+///
+/// Useful for rate-limited APIs or backends with memory constraints.
+#[derive(Debug, Clone)]
+pub struct BatchingTextEmbedder<E> {
+    inner: E,
+    batch_size: usize,
+}
+
+impl<E> BatchingTextEmbedder<E> {
+    pub fn new(inner: E, batch_size: usize) -> Self {
+        Self {
+            inner,
+            batch_size: batch_size.max(1),
+        }
+    }
+}
+
+impl<E: TextEmbedder> TextEmbedder for BatchingTextEmbedder<E> {
+    fn embed_texts(&self, texts: &[String], mode: EmbedMode) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.len() <= self.batch_size {
+            return self.inner.embed_texts(texts, mode);
+        }
+        let mut out = Vec::with_capacity(texts.len());
+        for chunk in texts.chunks(self.batch_size) {
+            out.extend(self.inner.embed_texts(chunk, mode)?);
+        }
+        Ok(out)
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        self.inner.model_id()
+    }
+
+    fn dimension(&self) -> Option<usize> {
+        self.inner.dimension()
+    }
+
+    fn capabilities(&self) -> TextEmbedderCapabilities {
+        self.inner.capabilities()
+    }
+}
+
 /// Minimal interface for "text → dense vector" encoders (bi-encoder style).
 ///
 /// This covers the common "sentence embedding" family: one vector per input string.
@@ -515,6 +558,56 @@ pub trait AudioEmbedder: Send + Sync {
     fn embed_audios(&self, audios: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<f32>>>;
 
     fn model_id(&self) -> Option<&str> {
+        None
+    }
+}
+
+// --- Async trait ---
+
+/// Boxed future type used by `AsyncTextEmbedder` for object safety.
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
+/// Async counterpart of `TextEmbedder`.
+///
+/// Object-safe via boxed futures. Use `async-openai`, `async-tei`, or `async-hf-inference`
+/// features for reqwest-backed implementations.
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+pub trait AsyncTextEmbedder: Send + Sync {
+    fn embed_texts(
+        &self,
+        texts: &[String],
+        mode: EmbedMode,
+    ) -> BoxFuture<'_, anyhow::Result<Vec<Vec<f32>>>>;
+
+    fn embed_text(
+        &self,
+        text: &str,
+        mode: EmbedMode,
+    ) -> BoxFuture<'_, anyhow::Result<Vec<f32>>> {
+        let text = text.to_string();
+        Box::pin(async move {
+            self.embed_texts(&[text], mode)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("embed_texts returned empty"))
+        })
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        None
+    }
+
+    fn dimension(&self) -> Option<usize> {
         None
     }
 }
@@ -1087,7 +1180,7 @@ pub mod tei {
 
 #[cfg(feature = "fastembed")]
 pub mod fastembed {
-    use super::{EmbedMode, TextEmbedder};
+    use super::{EmbedMode, SparseEmbedder, TextEmbedder};
     use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -1193,6 +1286,85 @@ pub mod fastembed {
             }
         }
     }
+
+    // --- Sparse embedding via fastembed ---
+
+    use fastembed::{SparseModel, SparseTextEmbedding};
+
+    #[allow(clippy::type_complexity)]
+    static SPARSE_CACHE: OnceLock<
+        &'static Mutex<HashMap<String, Arc<Mutex<SparseTextEmbedding>>>>,
+    > = OnceLock::new();
+
+    fn sparse_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<SparseTextEmbedding>>>> {
+        SPARSE_CACHE.get_or_init(|| Box::leak(Box::new(Mutex::new(HashMap::new()))))
+    }
+
+    /// Sparse lexical embedder backed by fastembed (SPLADE, BGE-M3).
+    pub struct FastembedSparseEmbedder {
+        model: Arc<Mutex<SparseTextEmbedding>>,
+        model_id: String,
+    }
+
+    impl FastembedSparseEmbedder {
+        /// Create with the default sparse model (SPLADE PP v1).
+        pub fn new_default() -> Result<Self> {
+            Self::with_model(SparseModel::default())
+        }
+
+        /// Create with an explicit fastembed sparse model.
+        pub fn with_model(model_name: SparseModel) -> Result<Self> {
+            let model = Self::get_or_init(model_name.clone())?;
+            let model_id = format!("fastembed-sparse:{:?}", model_name);
+            Ok(Self { model, model_id })
+        }
+
+        fn get_or_init(model_name: SparseModel) -> Result<Arc<Mutex<SparseTextEmbedding>>> {
+            let key = format!("{:?}", model_name);
+            let mut guard = sparse_cache()
+                .lock()
+                .expect("sparse model cache mutex poisoned");
+            if let Some(existing) = guard.get(&key) {
+                return Ok(Arc::clone(existing));
+            }
+            let opts = fastembed::SparseInitOptions::new(model_name)
+                .with_show_download_progress(false);
+            let model =
+                SparseTextEmbedding::try_new(opts).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let arc = Arc::new(Mutex::new(model));
+            guard.insert(key, Arc::clone(&arc));
+            Ok(arc)
+        }
+
+        pub fn model_id(&self) -> &str {
+            &self.model_id
+        }
+    }
+
+    impl SparseEmbedder for FastembedSparseEmbedder {
+        fn embed_sparse(
+            &self,
+            texts: &[String],
+            _mode: EmbedMode,
+        ) -> Result<Vec<Vec<(u32, f32)>>> {
+            let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            let mut guard = self.model.lock().expect("sparse model mutex poisoned");
+            let sparse = guard
+                .embed(refs, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Bridge fastembed's (Vec<usize>, Vec<f32>) to our (u32, f32) pairs.
+            Ok(sparse
+                .into_iter()
+                .map(|s| {
+                    s.indices
+                        .into_iter()
+                        .zip(s.values)
+                        .map(|(idx, val)| (idx as u32, val))
+                        .collect()
+                })
+                .collect())
+        }
+    }
 }
 
 #[cfg(feature = "ort-tokenizers")]
@@ -1256,6 +1428,378 @@ pub mod siglip {
     impl ImageEmbedder for SiglipEmbedder {
         fn embed_images(&self, _images: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<f32>>> {
             Err(anyhow::anyhow!("embedd(siglip): not implemented yet"))
+        }
+    }
+}
+
+// --- Async backends ---
+
+#[cfg(feature = "async-openai")]
+pub mod async_openai {
+    use super::{AsyncTextEmbedder, EmbedMode};
+    use anyhow::Result;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone)]
+    pub struct AsyncOpenAiEmbedder {
+        base_url: String,
+        api_key: String,
+        model: String,
+        client: reqwest::Client,
+    }
+
+    impl AsyncOpenAiEmbedder {
+        pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+            Self {
+                base_url: "https://api.openai.com".to_string(),
+                api_key: api_key.into(),
+                model: model.into(),
+                client: reqwest::Client::new(),
+            }
+        }
+
+        pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+            self.base_url = base_url.into().trim_end_matches('/').to_string();
+            self
+        }
+
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
+        fn endpoint(&self) -> String {
+            format!("{}/v1/embeddings", self.base_url)
+        }
+    }
+
+    #[derive(Serialize)]
+    struct EmbeddingsRequest<'a> {
+        model: &'a str,
+        input: &'a [String],
+    }
+
+    #[derive(Deserialize)]
+    struct EmbeddingsResponse {
+        data: Vec<EmbeddingDatum>,
+    }
+
+    #[derive(Deserialize)]
+    struct EmbeddingDatum {
+        embedding: Vec<f32>,
+    }
+
+    impl AsyncTextEmbedder for AsyncOpenAiEmbedder {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            _mode: EmbedMode,
+        ) -> super::BoxFuture<'_, Result<Vec<Vec<f32>>>> {
+            let texts = texts.to_vec();
+            Box::pin(async move {
+                let payload = EmbeddingsRequest {
+                    model: &self.model,
+                    input: &texts,
+                };
+                let resp = self
+                    .client
+                    .post(self.endpoint())
+                    .bearer_auth(&self.api_key)
+                    .json(&payload)
+                    .send()
+                    .await?;
+                let status = resp.status();
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(anyhow::anyhow!(
+                        "openai embeddings failed: status={} body={}",
+                        status,
+                        body
+                    ));
+                }
+                let parsed: EmbeddingsResponse = resp.json().await?;
+                Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
+            })
+        }
+
+        fn model_id(&self) -> Option<&str> {
+            Some(&self.model)
+        }
+    }
+}
+
+#[cfg(feature = "async-tei")]
+pub mod async_tei {
+    use super::{AsyncTextEmbedder, EmbedMode};
+    use anyhow::Result;
+
+    #[derive(Debug, Clone)]
+    pub struct AsyncTeiEmbedder {
+        base_url: String,
+        api_key: Option<String>,
+        prompt_name_query: Option<String>,
+        prompt_name_doc: Option<String>,
+        dimensions: Option<usize>,
+        normalize: Option<bool>,
+        truncate: Option<bool>,
+        truncation_direction: Option<String>,
+        client: reqwest::Client,
+    }
+
+    impl AsyncTeiEmbedder {
+        pub fn new(base_url: impl Into<String>) -> Self {
+            Self {
+                base_url: base_url.into().trim_end_matches('/').to_string(),
+                api_key: None,
+                prompt_name_query: None,
+                prompt_name_doc: None,
+                dimensions: None,
+                normalize: None,
+                truncate: None,
+                truncation_direction: None,
+                client: reqwest::Client::new(),
+            }
+        }
+
+        pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+            self.api_key = Some(api_key.into());
+            self
+        }
+
+        pub fn with_prompt_names(
+            mut self,
+            query: impl Into<String>,
+            doc: impl Into<String>,
+        ) -> Self {
+            self.prompt_name_query = Some(query.into());
+            self.prompt_name_doc = Some(doc.into());
+            self
+        }
+
+        pub fn with_dimensions(mut self, d: usize) -> Self {
+            self.dimensions = Some(d);
+            self
+        }
+
+        pub fn with_normalize(mut self, n: bool) -> Self {
+            self.normalize = Some(n);
+            self
+        }
+
+        pub fn with_truncate(mut self, t: bool) -> Self {
+            self.truncate = Some(t);
+            self
+        }
+
+        pub fn with_truncation_direction(mut self, dir: impl Into<String>) -> Self {
+            self.truncation_direction = Some(dir.into());
+            self
+        }
+
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
+        fn embed_endpoint(&self) -> String {
+            format!("{}/embed", self.base_url)
+        }
+
+        fn build_payload(&self, texts: &[String], mode: EmbedMode) -> serde_json::Value {
+            let mut m = serde_json::Map::new();
+            m.insert("inputs".to_string(), serde_json::Value::from(texts));
+            if let Some(d) = self.dimensions {
+                m.insert("dimensions".to_string(), (d as u64).into());
+            }
+            let pn = match mode {
+                EmbedMode::Query => self.prompt_name_query.as_deref(),
+                EmbedMode::Document => self.prompt_name_doc.as_deref(),
+            };
+            if let Some(pn) = pn {
+                m.insert("prompt_name".to_string(), pn.into());
+            }
+            if let Some(n) = self.normalize {
+                m.insert("normalize".to_string(), n.into());
+            }
+            if let Some(t) = self.truncate {
+                m.insert("truncate".to_string(), t.into());
+            }
+            if let Some(dir) = &self.truncation_direction {
+                m.insert("truncation_direction".to_string(), dir.clone().into());
+            }
+            serde_json::Value::Object(m)
+        }
+    }
+
+    impl AsyncTextEmbedder for AsyncTeiEmbedder {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            mode: EmbedMode,
+        ) -> super::BoxFuture<'_, Result<Vec<Vec<f32>>>> {
+            let payload = self.build_payload(texts, mode);
+            Box::pin(async move {
+                let mut req = self.client.post(self.embed_endpoint());
+                if let Some(k) = &self.api_key {
+                    req = req.bearer_auth(k);
+                }
+                let resp = req.json(&payload).send().await?;
+                let status = resp.status();
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(anyhow::anyhow!(
+                        "tei /embed failed: status={} body={}",
+                        status,
+                        body
+                    ));
+                }
+                let embs: Vec<Vec<f32>> = resp.json().await?;
+                Ok(embs)
+            })
+        }
+
+        fn dimension(&self) -> Option<usize> {
+            self.dimensions
+        }
+    }
+}
+
+#[cfg(feature = "async-hf-inference")]
+pub mod async_hf_inference {
+    use super::{AsyncTextEmbedder, EmbedMode};
+    use anyhow::Result;
+
+    #[derive(Debug, Clone)]
+    pub struct AsyncHfInferenceEmbedder {
+        base_url: String,
+        token: Option<String>,
+        model: String,
+        client: reqwest::Client,
+    }
+
+    impl AsyncHfInferenceEmbedder {
+        pub fn new(model: impl Into<String>) -> Self {
+            Self::new_with_base_url(model, "https://api-inference.huggingface.co")
+        }
+
+        pub fn new_with_base_url(
+            model: impl Into<String>,
+            base_url: impl Into<String>,
+        ) -> Self {
+            Self {
+                base_url: base_url.into().trim_end_matches('/').to_string(),
+                token: std::env::var("HF_API_TOKEN").ok(),
+                model: model.into(),
+                client: reqwest::Client::new(),
+            }
+        }
+
+        pub fn with_token(mut self, token: impl Into<String>) -> Self {
+            self.token = Some(token.into());
+            self
+        }
+
+        pub fn with_client(mut self, client: reqwest::Client) -> Self {
+            self.client = client;
+            self
+        }
+
+        fn endpoint(&self) -> String {
+            format!("{}/models/{}", self.base_url, self.model)
+        }
+    }
+
+    /// Flatten nested JSON arrays to a single f32 vector via mean pooling.
+    fn mean_pool(v: &serde_json::Value) -> Result<Vec<f32>> {
+        fn as_flat(v: &serde_json::Value) -> Option<Vec<f32>> {
+            match v {
+                serde_json::Value::Array(xs) if xs.iter().all(|x| x.is_number()) => xs
+                    .iter()
+                    .map(|x| x.as_f64().map(|f| f as f32))
+                    .collect(),
+                _ => None,
+            }
+        }
+
+        if let Some(vec) = as_flat(v) {
+            return Ok(vec);
+        }
+
+        fn collect_leaves(v: &serde_json::Value, out: &mut Vec<Vec<f32>>) -> Result<()> {
+            if let Some(vec) = as_flat(v) {
+                out.push(vec);
+                return Ok(());
+            }
+            match v {
+                serde_json::Value::Array(xs) => {
+                    for x in xs {
+                        collect_leaves(x, out)?;
+                    }
+                    Ok(())
+                }
+                _ => Err(anyhow::anyhow!("expected numeric arrays")),
+            }
+        }
+
+        let mut leaves = Vec::new();
+        collect_leaves(v, &mut leaves)?;
+        if leaves.is_empty() {
+            return Err(anyhow::anyhow!("empty embedding response"));
+        }
+        let d = leaves[0].len();
+        if d == 0 || !leaves.iter().all(|l| l.len() == d) {
+            return Err(anyhow::anyhow!("inconsistent dims in HF response"));
+        }
+        let mut acc = vec![0.0f32; d];
+        for leaf in &leaves {
+            for (i, x) in leaf.iter().enumerate() {
+                acc[i] += x;
+            }
+        }
+        let n = leaves.len() as f32;
+        for x in &mut acc {
+            *x /= n;
+        }
+        Ok(acc)
+    }
+
+    impl AsyncTextEmbedder for AsyncHfInferenceEmbedder {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            _mode: EmbedMode,
+        ) -> super::BoxFuture<'_, Result<Vec<Vec<f32>>>> {
+            let payload = serde_json::json!({ "inputs": texts.to_vec() });
+            Box::pin(async move {
+                let mut req = self.client.post(self.endpoint()).json(&payload);
+                if let Some(t) = &self.token {
+                    req = req.bearer_auth(t);
+                }
+                let resp = req.send().await?;
+                let status = resp.status();
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(anyhow::anyhow!(
+                        "hf-inference failed: status={} body={}",
+                        status,
+                        body
+                    ));
+                }
+                let v: serde_json::Value = resp.json().await?;
+                match v {
+                    serde_json::Value::Array(items) => {
+                        if items.iter().all(|x| x.is_number()) {
+                            return Ok(vec![mean_pool(&serde_json::Value::Array(items))?]);
+                        }
+                        items.iter().map(mean_pool).collect()
+                    }
+                    other => Err(anyhow::anyhow!("unexpected HF response: {}", other)),
+                }
+            })
+        }
+
+        fn model_id(&self) -> Option<&str> {
+            Some(&self.model)
         }
     }
 }
@@ -1584,9 +2128,8 @@ pub mod vector {
 mod candle_hf {
     use super::{EmbedMode, TextEmbedder};
     use anyhow::Result;
-    use candle_core::{DType, Device, Tensor};
+    use candle_core::{DType, Device, Module, Tensor};
     use candle_nn::VarBuilder;
-    use candle_transformers::models::bert::{BertModel, Config as BertConfig};
     use hf_hub::api::sync::Api as HfApi;
     use once_cell::sync::OnceCell;
     use std::fs::File;
@@ -1594,17 +2137,119 @@ mod candle_hf {
     use std::path::Path;
     use tokenizers::Tokenizer;
 
+    // Architecture-specific model types from candle-transformers.
+    use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+    use candle_transformers::models::distilbert::{
+        Config as DistilBertConfig, DistilBertModel,
+    };
+    use candle_transformers::models::jina_bert::{
+        BertModel as JinaBertModel, Config as JinaBertConfig,
+    };
+
     static EMBEDDER: OnceCell<std::sync::Mutex<LocalHfEmbedder>> = OnceCell::new();
+
+    /// Detected model architecture, used to dispatch the correct forward pass.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ModelArch {
+        Bert,
+        JinaBert,
+        DistilBert,
+    }
+
+    /// Internal enum holding the loaded model variant.
+    enum CandleModel {
+        Bert(BertModel),
+        JinaBert(JinaBertModel),
+        DistilBert(DistilBertModel),
+    }
+
+    impl CandleModel {
+        /// Run the forward pass appropriate for this architecture.
+        ///
+        /// All variants return `[bsz, seq, hidden]`.
+        fn forward(
+            &self,
+            input_ids: &Tensor,
+            token_type_ids: &Tensor,
+            attention_mask: &Tensor,
+        ) -> Result<Tensor> {
+            match self {
+                CandleModel::Bert(m) => Ok(m.forward(input_ids, token_type_ids, Some(attention_mask))?),
+                CandleModel::JinaBert(m) => {
+                    // JinaBERT takes only input_ids (handles token types internally).
+                    Ok(m.forward(input_ids)?)
+                }
+                CandleModel::DistilBert(m) => {
+                    // DistilBERT takes input_ids + attention_mask (no token_type_ids).
+                    Ok(m.forward(input_ids, attention_mask)?)
+                }
+            }
+        }
+    }
+
+    /// Detect architecture from the raw config.json.
+    fn detect_arch(config_json: &serde_json::Value) -> ModelArch {
+        match config_json
+            .get("model_type")
+            .and_then(|v| v.as_str())
+        {
+            Some("distilbert") => ModelArch::DistilBert,
+            Some("bert") => {
+                // JinaBERT uses ALiBi position embeddings.
+                if config_json
+                    .get("position_embedding_type")
+                    .and_then(|v| v.as_str())
+                    == Some("alibi")
+                {
+                    ModelArch::JinaBert
+                } else {
+                    ModelArch::Bert
+                }
+            }
+            // Default to BERT for unknown types (best compatibility).
+            _ => ModelArch::Bert,
+        }
+    }
+
+    fn hidden_size(config_json: &serde_json::Value) -> usize {
+        config_json
+            .get("hidden_size")
+            .or_else(|| config_json.get("dim"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(768) as usize
+    }
+
+    fn load_model(
+        config_json: &serde_json::Value,
+        vb: VarBuilder,
+        arch: ModelArch,
+    ) -> Result<CandleModel> {
+        match arch {
+            ModelArch::Bert => {
+                let cfg: BertConfig = serde_json::from_value(config_json.clone())?;
+                Ok(CandleModel::Bert(BertModel::load(vb, &cfg)?))
+            }
+            ModelArch::JinaBert => {
+                let cfg: JinaBertConfig = serde_json::from_value(config_json.clone())?;
+                Ok(CandleModel::JinaBert(JinaBertModel::new(vb, &cfg)?))
+            }
+            ModelArch::DistilBert => {
+                let cfg: DistilBertConfig = serde_json::from_value(config_json.clone())?;
+                Ok(CandleModel::DistilBert(DistilBertModel::load(vb, &cfg)?))
+            }
+        }
+    }
 
     /// Local embedding inference via HuggingFace Hub + Candle (CPU).
     ///
-    /// Note: this is the backend `iksh` currently uses.
+    /// Supports BERT, JinaBERT, and DistilBERT architectures.
+    /// Architecture is auto-detected from `config.json`.
     pub struct LocalHfEmbedder {
         pub model_id: String,
         tokenizer: Tokenizer,
-        model: BertModel,
+        model: CandleModel,
+        arch: ModelArch,
         device: Device,
-        #[allow(dead_code)]
         hidden_dim: usize,
         query_prefix: String,
         doc_prefix: String,
@@ -1619,18 +2264,20 @@ mod candle_hf {
             let tok_path = dir.join("tokenizer.json");
             let weights_path = dir.join("model.safetensors");
 
-            // Preflight: validate safetensors structure before mmap loading.
             super::safetensors::validate_file(&weights_path)?;
 
-            let config: BertConfig =
-                serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
+            let config_json: serde_json::Value =
+                serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
+            let arch = detect_arch(&config_json);
+            let hdim = hidden_size(&config_json);
+
             let device = Device::Cpu;
             // SAFETY: safetensors header+offsets validated above. The mmap lifetime is
             // bound to VarBuilder which owns the mapping; no aliased mutation occurs.
             let vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
             };
-            let model = BertModel::load(vb, &config)?;
+            let model = load_model(&config_json, vb, arch)?;
 
             let tokenizer = Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -1641,8 +2288,9 @@ mod candle_hf {
                 model_id: label.to_string(),
                 tokenizer,
                 model,
+                arch,
                 device,
-                hidden_dim: config.hidden_size,
+                hidden_dim: hdim,
                 query_prefix: prompt.query_prefix,
                 doc_prefix: prompt.doc_prefix,
                 max_len,
@@ -1662,14 +2310,17 @@ mod candle_hf {
 
                     super::safetensors::validate_file(&weights_path)?;
 
-                    let config: BertConfig =
-                        serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
+                    let config_json: serde_json::Value =
+                        serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
+                    let arch = detect_arch(&config_json);
+                    let hdim = hidden_size(&config_json);
+
                     let device = Device::Cpu;
                     // SAFETY: see from_dir -- safetensors validated, mmap owned by VarBuilder.
                     let vb = unsafe {
                         VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
                     };
-                    let model = BertModel::load(vb, &config)?;
+                    let model = load_model(&config_json, vb, arch)?;
 
                     let tokenizer =
                         Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1681,14 +2332,20 @@ mod candle_hf {
                         model_id: model_id.to_string(),
                         tokenizer,
                         model,
+                        arch,
                         device,
-                        hidden_dim: config.hidden_size,
+                        hidden_dim: hdim,
                         query_prefix: prompt.query_prefix,
                         doc_prefix: prompt.doc_prefix,
                         max_len,
                     })
                 }
             }
+        }
+
+        /// The detected model architecture.
+        pub fn arch(&self) -> ModelArch {
+            self.arch
         }
 
         /// Override the maximum token length (clamped to 2048).
@@ -1726,7 +2383,6 @@ mod candle_hf {
         }
 
         fn embed_texts_inner(&self, texts: &[String], is_query: bool) -> Result<Vec<Vec<f32>>> {
-            // Tokenize (with manual truncation + padding).
             let mut toks = Vec::with_capacity(texts.len());
             let mut masks = Vec::with_capacity(texts.len());
             let mut max_seq = 0usize;
@@ -1752,7 +2408,6 @@ mod candle_hf {
                 masks.push(mask);
             }
 
-            // Pad.
             let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0);
             for (ids, mask) in toks.iter_mut().zip(masks.iter_mut()) {
                 while ids.len() < max_seq {
@@ -1761,7 +2416,6 @@ mod candle_hf {
                 }
             }
 
-            // Build tensors -- pre-allocated flat buffer avoids intermediate Vec from flatten.
             let bsz = toks.len();
             let total = bsz * max_seq;
             let mut flat_ids = Vec::with_capacity(total);
@@ -1776,12 +2430,10 @@ mod candle_hf {
                 Tensor::from_vec(flat_mask, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
             let token_type_ids = Tensor::zeros((bsz, max_seq), DType::I64, &self.device)?;
 
-            // Forward: last hidden state [bsz, seq, hidden]
-            let ys = self
-                .model
-                .forward(&input_ids, &token_type_ids, Some(&attention_mask))?;
+            // Dispatch to architecture-specific forward pass.
+            let ys = self.model.forward(&input_ids, &token_type_ids, &attention_mask)?;
 
-            // Mean-pool with attention mask.
+            // Mean-pool with attention mask, then L2 normalize.
             let ys = ys.to_dtype(DType::F32)?;
             let mask_f = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?;
             let masked = ys.broadcast_mul(&mask_f)?;
@@ -1789,7 +2441,6 @@ mod candle_hf {
             let denom = mask_f.sum(1)?.clamp(1e-6, f32::MAX)?;
             let pooled = sum.broadcast_div(&denom)?;
 
-            // L2 normalize.
             let norms = pooled
                 .sqr()?
                 .sum(1)?
@@ -1829,7 +2480,7 @@ mod candle_hf {
 }
 
 #[cfg(feature = "candle-hf")]
-pub use candle_hf::LocalHfEmbedder;
+pub use candle_hf::{LocalHfEmbedder, ModelArch};
 
 #[cfg(test)]
 mod tests {
