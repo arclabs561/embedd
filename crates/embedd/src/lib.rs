@@ -612,6 +612,58 @@ pub trait AsyncTextEmbedder: Send + Sync {
     }
 }
 
+/// Wraps any sync `TextEmbedder` as an `AsyncTextEmbedder` via `tokio::task::spawn_blocking`.
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+pub struct AsyncSyncBridge<E> {
+    inner: std::sync::Arc<E>,
+}
+
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+impl<E: TextEmbedder + 'static> AsyncSyncBridge<E> {
+    pub fn new(inner: E) -> Self {
+        Self {
+            inner: std::sync::Arc::new(inner),
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+impl<E: TextEmbedder + 'static> AsyncTextEmbedder for AsyncSyncBridge<E> {
+    fn embed_texts(
+        &self,
+        texts: &[String],
+        mode: EmbedMode,
+    ) -> BoxFuture<'_, anyhow::Result<Vec<Vec<f32>>>> {
+        let inner = std::sync::Arc::clone(&self.inner);
+        let texts = texts.to_vec();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || inner.embed_texts(&texts, mode))
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn_blocking join error: {e}"))?
+        })
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        self.inner.model_id()
+    }
+
+    fn dimension(&self) -> Option<usize> {
+        self.inner.dimension()
+    }
+}
+
 // --- Optional backends (feature-gated) ---
 //
 // Goal: `embedd` is the only public crate name. Backends live behind features,
@@ -2151,9 +2203,12 @@ mod candle_hf {
     use candle_transformers::models::modernbert::{
         Config as ModernBertConfig, ModernBert,
     };
-    // Stella v5 is not auto-detectable: model_type is "new" (400M) or "qwen2" (1.5B),
-    // and EmbeddingModel::new requires two separate VarBuilders (base + embed head).
-    // Supporting it requires a dedicated constructor, not the generic from_dir/new path.
+    // Stella v5 is not auto-detectable via model_type ("new" for 400M, "qwen2" for 1.5B).
+    // It also needs two VarBuilders (base + embed head from separate safetensors files).
+    // Supported via dedicated StellaEmbedder struct, not the generic LocalHfEmbedder path.
+    use candle_transformers::models::stella_en_v5::{
+        Config as StellaConfig, EmbedDim, EmbeddingModel as StellaEmbeddingModel,
+    };
 
     static EMBEDDER: OnceCell<std::sync::Mutex<LocalHfEmbedder>> = OnceCell::new();
 
@@ -2501,10 +2556,241 @@ mod candle_hf {
             }
         }
     }
+
+    /// Stella v5 embedder with dedicated loading for the multi-file weight layout.
+    ///
+    /// Stella models store base transformer weights and embedding head weights in
+    /// separate safetensors files (SentenceTransformers layout):
+    /// - `model.safetensors` -- base transformer
+    /// - `2_Dense_{dim}/model.safetensors` -- embedding head for output dimension
+    ///
+    /// The forward pass requires `&mut self` (candle KV cache), so this wraps in
+    /// a Mutex internally for thread safety.
+    pub struct StellaEmbedder {
+        model: std::sync::Mutex<StellaEmbeddingModel>,
+        model_id: String,
+        embed_dim: usize,
+        device: Device,
+        tokenizer: Tokenizer,
+        max_len: usize,
+    }
+
+    /// Map a numeric dim to the candle EmbedDim enum.
+    fn to_embed_dim(dim: usize) -> Result<EmbedDim> {
+        match dim {
+            256 => Ok(EmbedDim::Dim256),
+            768 => Ok(EmbedDim::Dim768),
+            1024 => Ok(EmbedDim::Dim1024),
+            2048 => Ok(EmbedDim::Dim2048),
+            4096 => Ok(EmbedDim::Dim4096),
+            6144 => Ok(EmbedDim::Dim6144),
+            8192 => Ok(EmbedDim::Dim8192),
+            _ => Err(anyhow::anyhow!(
+                "unsupported Stella embed dim {dim}; supported: 256, 768, 1024, 2048, 4096, 6144, 8192"
+            )),
+        }
+    }
+
+    /// Detect Stella variant from config.json and build the candle Config.
+    ///
+    /// Stella 400M: hidden_size=1024, model_type="new"
+    /// Stella 1.5B: hidden_size=1536, model_type="qwen2"
+    fn stella_config(config_json: &serde_json::Value, embed_dim: EmbedDim) -> Result<StellaConfig> {
+        let hidden = config_json
+            .get("hidden_size")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        match hidden {
+            1024 => Ok(StellaConfig::new_400_m_v5(embed_dim)),
+            1536 => Ok(StellaConfig::new_1_5_b_v5(embed_dim)),
+            _ => Err(anyhow::anyhow!(
+                "cannot detect Stella variant from hidden_size={hidden} (expected 1024 for 400M or 1536 for 1.5B)"
+            )),
+        }
+    }
+
+    impl StellaEmbedder {
+        /// Load from a local directory with the SentenceTransformers layout.
+        ///
+        /// `embed_dim` selects which `2_Dense_{dim}/` subdirectory to load the
+        /// embedding head from. Supported: 256, 768, 1024, 2048, 4096, 6144, 8192.
+        pub fn from_dir(label: &str, dir: &Path, embed_dim: usize) -> Result<Self> {
+            let edim = to_embed_dim(embed_dim)?;
+            let config_path = dir.join("config.json");
+            let tok_path = dir.join("tokenizer.json");
+            let base_weights = dir.join("model.safetensors");
+            let head_dir = dir.join(format!("2_Dense_{embed_dim}"));
+            let head_weights = head_dir.join("model.safetensors");
+
+            if !head_weights.exists() {
+                return Err(anyhow::anyhow!(
+                    "embed head not found: {} (available dims are in 2_Dense_*/)",
+                    head_weights.display()
+                ));
+            }
+
+            super::safetensors::validate_file(&base_weights)?;
+            super::safetensors::validate_file(&head_weights)?;
+
+            let config_json: serde_json::Value =
+                serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
+            let cfg = stella_config(&config_json, edim)?;
+
+            let device = Device::Cpu;
+
+            // SAFETY: safetensors validated above, mmap owned by VarBuilder.
+            let base_vb = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[base_weights], DType::F32, &device)?
+            };
+            let embed_vb = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[head_weights], DType::F32, &device)?
+            };
+
+            let model = StellaEmbeddingModel::new(&cfg, base_vb, embed_vb)?;
+            let tokenizer =
+                Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            Ok(Self {
+                model: std::sync::Mutex::new(model),
+                model_id: label.to_string(),
+                embed_dim,
+                device,
+                tokenizer,
+                max_len: 512,
+            })
+        }
+
+        /// Load from HuggingFace Hub.
+        pub fn from_hub(model_id: &str, embed_dim: usize) -> Result<Self> {
+            let edim = to_embed_dim(embed_dim)?;
+            let api = HfApi::new()?;
+            let repo = api.model(model_id.to_string());
+
+            let config_path = repo.get("config.json")?;
+            let tok_path = repo.get("tokenizer.json")?;
+            let base_weights = repo.get("model.safetensors")?;
+            let head_path = format!("2_Dense_{embed_dim}/model.safetensors");
+            let head_weights = repo.get(&head_path).map_err(|e| {
+                anyhow::anyhow!("embed head {head_path} not found in {model_id}: {e}")
+            })?;
+
+            super::safetensors::validate_file(&base_weights)?;
+            super::safetensors::validate_file(&head_weights)?;
+
+            let config_json: serde_json::Value =
+                serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
+            let cfg = stella_config(&config_json, edim)?;
+
+            let device = Device::Cpu;
+
+            // SAFETY: safetensors validated above, mmap owned by VarBuilder.
+            let base_vb = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[base_weights], DType::F32, &device)?
+            };
+            let embed_vb = unsafe {
+                VarBuilder::from_mmaped_safetensors(&[head_weights], DType::F32, &device)?
+            };
+
+            let model = StellaEmbeddingModel::new(&cfg, base_vb, embed_vb)?;
+            let tokenizer =
+                Tokenizer::from_file(tok_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            Ok(Self {
+                model: std::sync::Mutex::new(model),
+                model_id: model_id.to_string(),
+                embed_dim,
+                device,
+                tokenizer,
+                max_len: 512,
+            })
+        }
+
+        pub fn with_max_len(mut self, max_len: usize) -> Self {
+            self.max_len = max_len.min(8192);
+            self
+        }
+    }
+
+    impl TextEmbedder for StellaEmbedder {
+        fn embed_texts(&self, texts: &[String], _mode: EmbedMode) -> Result<Vec<Vec<f32>>> {
+            // Tokenize.
+            let mut toks = Vec::with_capacity(texts.len());
+            let mut masks = Vec::with_capacity(texts.len());
+            let mut max_seq = 0usize;
+
+            for t in texts {
+                let enc = self
+                    .tokenizer
+                    .encode(t.as_str(), true)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let ids = enc.get_ids();
+                let mask = enc.get_attention_mask();
+                let len = ids.len().min(self.max_len);
+                toks.push(ids[..len].to_vec());
+                masks.push(mask[..len].to_vec());
+                max_seq = max_seq.max(len);
+            }
+
+            let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0);
+            for (ids, mask) in toks.iter_mut().zip(masks.iter_mut()) {
+                while ids.len() < max_seq {
+                    ids.push(pad_id);
+                    mask.push(0);
+                }
+            }
+
+            let bsz = toks.len();
+            let total = bsz * max_seq;
+            let mut flat_ids = Vec::with_capacity(total);
+            let mut flat_mask = Vec::with_capacity(total);
+            for (ids, mask) in toks.into_iter().zip(masks) {
+                flat_ids.extend_from_slice(&ids);
+                flat_mask.extend_from_slice(&mask);
+            }
+            let input_ids =
+                Tensor::from_vec(flat_ids, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
+            let attention_mask =
+                Tensor::from_vec(flat_mask, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
+
+            // Stella returns already-pooled [bsz, embed_dim] from forward.
+            let mut guard = self.model.lock().expect("stella mutex poisoned");
+            let pooled = guard.forward(&input_ids, &attention_mask)?;
+
+            // L2 normalize.
+            let norms = pooled
+                .sqr()?
+                .sum(1)?
+                .sqrt()?
+                .clamp(1e-12, f32::MAX)?
+                .unsqueeze(1)?;
+            let normed = pooled.broadcast_div(&norms)?;
+
+            Ok(normed.to_vec2()?)
+        }
+
+        fn model_id(&self) -> Option<&str> {
+            Some(&self.model_id)
+        }
+
+        fn dimension(&self) -> Option<usize> {
+            Some(self.embed_dim)
+        }
+
+        fn capabilities(&self) -> super::TextEmbedderCapabilities {
+            super::TextEmbedderCapabilities {
+                uses_embed_mode: super::PromptApplication::None,
+                normalization: super::Normalization::L2Normalized,
+                truncation: super::TruncationPolicy::Truncate {
+                    max_len: Some(self.max_len),
+                    direction: super::TruncationDirection::Right,
+                },
+            }
+        }
+    }
 }
 
 #[cfg(feature = "candle-hf")]
-pub use candle_hf::{LocalHfEmbedder, ModelArch};
+pub use candle_hf::{LocalHfEmbedder, ModelArch, StellaEmbedder};
 
 #[cfg(test)]
 mod tests {
