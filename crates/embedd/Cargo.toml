@@ -52,6 +52,7 @@ harness = false
 
 [features]
 default = []
+serde = ["dep:serde"]
 # Local model inference (HF Hub + Candle).
 candle-hf = [
   "dep:candle-core",
@@ -74,7 +75,11 @@ siglip = []
 cli = ["dep:clap"]
 
 # Convenience "everything" feature for local dev.
-all = ["candle-hf", "openai", "tei", "hf-inference", "fastembed", "ort-tokenizers", "burn-backend", "siglip"]
+all = ["candle-hf", "openai", "tei", "hf-inference", "fastembed", "ort-tokenizers", "burn-backend", "siglip", "serde"]
+
+[[example]]
+name = "hello_embed"
+required-features = ["fastembed"]
 
 [[bin]]
 name = "embedd"
