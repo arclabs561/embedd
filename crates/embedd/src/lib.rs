@@ -2145,6 +2145,15 @@ mod candle_hf {
     use candle_transformers::models::jina_bert::{
         BertModel as JinaBertModel, Config as JinaBertConfig,
     };
+    use candle_transformers::models::xlm_roberta::{
+        Config as XlmRobertaConfig, XLMRobertaModel,
+    };
+    use candle_transformers::models::modernbert::{
+        Config as ModernBertConfig, ModernBert,
+    };
+    // Stella v5 is not auto-detectable: model_type is "new" (400M) or "qwen2" (1.5B),
+    // and EmbeddingModel::new requires two separate VarBuilders (base + embed head).
+    // Supporting it requires a dedicated constructor, not the generic from_dir/new path.
 
     static EMBEDDER: OnceCell<std::sync::Mutex<LocalHfEmbedder>> = OnceCell::new();
 
@@ -2154,6 +2163,8 @@ mod candle_hf {
         Bert,
         JinaBert,
         DistilBert,
+        XlmRoberta,
+        ModernBert,
     }
 
     /// Internal enum holding the loaded model variant.
@@ -2161,6 +2172,8 @@ mod candle_hf {
         Bert(BertModel),
         JinaBert(JinaBertModel),
         DistilBert(DistilBertModel),
+        XlmRoberta(XLMRobertaModel),
+        ModernBert(ModernBert),
     }
 
     impl CandleModel {
@@ -2174,15 +2187,15 @@ mod candle_hf {
             attention_mask: &Tensor,
         ) -> Result<Tensor> {
             match self {
-                CandleModel::Bert(m) => Ok(m.forward(input_ids, token_type_ids, Some(attention_mask))?),
-                CandleModel::JinaBert(m) => {
-                    // JinaBERT takes only input_ids (handles token types internally).
-                    Ok(m.forward(input_ids)?)
+                CandleModel::Bert(m) => {
+                    Ok(m.forward(input_ids, token_type_ids, Some(attention_mask))?)
                 }
-                CandleModel::DistilBert(m) => {
-                    // DistilBERT takes input_ids + attention_mask (no token_type_ids).
-                    Ok(m.forward(input_ids, attention_mask)?)
+                CandleModel::JinaBert(m) => Ok(m.forward(input_ids)?),
+                CandleModel::DistilBert(m) => Ok(m.forward(input_ids, attention_mask)?),
+                CandleModel::XlmRoberta(m) => {
+                    Ok(m.forward(input_ids, attention_mask, token_type_ids, None, None, None)?)
                 }
+                CandleModel::ModernBert(m) => Ok(m.forward(input_ids, attention_mask)?),
             }
         }
     }
@@ -2194,8 +2207,11 @@ mod candle_hf {
             .and_then(|v| v.as_str())
         {
             Some("distilbert") => ModelArch::DistilBert,
+            Some("xlm-roberta") => ModelArch::XlmRoberta,
+            Some("modernbert") => ModelArch::ModernBert,
             Some("bert") => {
                 // JinaBERT uses ALiBi position embeddings.
+                // See tests/arch_detection.rs for config.json test vectors.
                 if config_json
                     .get("position_embedding_type")
                     .and_then(|v| v.as_str())
@@ -2237,13 +2253,21 @@ mod candle_hf {
                 let cfg: DistilBertConfig = serde_json::from_value(config_json.clone())?;
                 Ok(CandleModel::DistilBert(DistilBertModel::load(vb, &cfg)?))
             }
+            ModelArch::XlmRoberta => {
+                let cfg: XlmRobertaConfig = serde_json::from_value(config_json.clone())?;
+                Ok(CandleModel::XlmRoberta(XLMRobertaModel::new(&cfg, vb)?))
+            }
+            ModelArch::ModernBert => {
+                let cfg: ModernBertConfig = serde_json::from_value(config_json.clone())?;
+                Ok(CandleModel::ModernBert(ModernBert::load(vb, &cfg)?))
+            }
         }
     }
 
     /// Local embedding inference via HuggingFace Hub + Candle (CPU).
     ///
-    /// Supports BERT, JinaBERT, and DistilBERT architectures.
-    /// Architecture is auto-detected from `config.json`.
+    /// Supports BERT, JinaBERT, DistilBERT, XLM-RoBERTa, and ModernBERT.
+    /// Architecture is auto-detected from `config.json` `model_type` field.
     pub struct LocalHfEmbedder {
         pub model_id: String,
         tokenizer: Tokenizer,
