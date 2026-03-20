@@ -15,3 +15,6 @@ categories = ["database", "science"]
 embedd.workspace = true
 qdrant-client.workspace = true
 anyhow.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

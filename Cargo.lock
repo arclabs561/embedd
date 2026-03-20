@@ -2467,6 +2467,7 @@ dependencies = [
  "anyhow",
  "embedd",
  "qdrant-client",
+ "tokio",
 ]
 
 [[package]]
