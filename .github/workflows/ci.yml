@@ -45,6 +45,7 @@ jobs:
           - "--features async-hf-inference"
           - "--features ort-tokenizers"
           - "--features serde"
+          - "--features qdrant"
           - "--features openai,cli"
           - "--all-features"
     steps:

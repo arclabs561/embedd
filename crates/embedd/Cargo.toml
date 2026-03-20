@@ -38,6 +38,9 @@ tokenizers = { workspace = true, optional = true }
 # Optional: burn backend
 burn = { workspace = true, optional = true }
 
+# Optional: Qdrant vector database
+qdrant-client = { workspace = true, optional = true }
+
 # Optional: HuggingFace + Candle stack
 candle-core = { workspace = true, optional = true }
 candle-nn = { workspace = true, optional = true }
@@ -76,6 +79,7 @@ fastembed = ["dep:fastembed"]
 ort-tokenizers = ["dep:ort", "dep:tokenizers"]
 burn-backend = ["dep:burn"]
 siglip = []
+qdrant = ["dep:qdrant-client", "dep:tokio"]
 
 # Async adapter backends (reqwest + tokio).
 async-openai = ["dep:reqwest", "dep:tokio", "dep:serde"]
@@ -90,6 +94,7 @@ all = [
   "candle-hf", "openai", "tei", "hf-inference", "fastembed",
   "ort-tokenizers", "burn-backend", "siglip", "serde",
   "async-openai", "async-tei", "async-hf-inference",
+  "qdrant",
 ]
 
 [[example]]

@@ -1,14 +1,17 @@
 //! Bridge between embedd embedders and Qdrant vector database.
 //!
-//! Provides `embed_and_upsert` and `embed_and_search` for the common
+//! Provides [`embed_and_upsert`] and [`embed_and_search`] for the common
 //! "embed text, then store/query in Qdrant" workflow.
+//!
+//! Requires the `qdrant` feature.
 
 use anyhow::Result;
-use embedd::{EmbedMode, TextEmbedder};
 use qdrant_client::qdrant::{
     PointStruct, SearchPointsBuilder, SearchResponse, UpsertPointsBuilder,
 };
 use qdrant_client::Qdrant;
+
+use crate::{EmbedMode, TextEmbedder};
 
 /// Embed texts and upsert them as points into a Qdrant collection.
 ///
