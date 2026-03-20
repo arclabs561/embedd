@@ -35,11 +35,7 @@ pub async fn embed_and_upsert(
         .enumerate()
         .map(|(i, (text, vec))| {
             let id = start_id + i as u64;
-            PointStruct::new(
-                id,
-                vec,
-                [("text".to_string(), text.clone().into())],
-            )
+            PointStruct::new(id, vec, [("text".to_string(), text.clone().into())])
         })
         .collect();
 
@@ -59,8 +55,7 @@ pub async fn embed_and_search(
 ) -> Result<SearchResponse> {
     let query_vec = embedder.embed_text(query, EmbedMode::Query)?;
 
-    let request = SearchPointsBuilder::new(collection, query_vec, limit)
-        .with_payload(true);
+    let request = SearchPointsBuilder::new(collection, query_vec, limit).with_payload(true);
 
     let response = client.search_points(request).await?;
     Ok(response)
