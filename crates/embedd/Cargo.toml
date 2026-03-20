@@ -20,9 +20,13 @@ once_cell.workspace = true
 serde_json.workspace = true
 clap = { workspace = true, optional = true, features = ["derive"] }
 
-# Optional: HTTP client adapters
+# Optional: HTTP client adapters (sync)
 serde = { workspace = true, optional = true, features = ["derive"] }
 ureq = { workspace = true, optional = true }
+
+# Optional: async HTTP client
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 # Optional: fastembed backend
 fastembed = { workspace = true, optional = true }
@@ -45,6 +49,7 @@ proptest.workspace = true
 criterion.workspace = true
 assert_cmd = "2.0"
 predicates = "3.0"
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [[bench]]
 name = "embedd_bench"
@@ -53,6 +58,7 @@ harness = false
 [features]
 default = []
 serde = ["dep:serde"]
+
 # Local model inference (HF Hub + Candle).
 candle-hf = [
   "dep:candle-core",
@@ -62,7 +68,7 @@ candle-hf = [
   "dep:tokenizers",
 ]
 
-# Adapter backends (all inside this crate; keeps `embedd` as the only public crate name).
+# Sync adapter backends.
 openai = ["dep:ureq", "dep:serde"]
 tei = ["dep:ureq"]
 hf-inference = ["dep:ureq", "dep:serde"]
@@ -71,11 +77,20 @@ ort-tokenizers = ["dep:ort", "dep:tokenizers"]
 burn-backend = ["dep:burn"]
 siglip = []
 
+# Async adapter backends (reqwest + tokio).
+async-openai = ["dep:reqwest", "dep:tokio", "dep:serde"]
+async-tei = ["dep:reqwest", "dep:tokio"]
+async-hf-inference = ["dep:reqwest", "dep:tokio", "dep:serde"]
+
 # Minimal CLI for local validation (feature-gated to keep the crate lean by default).
 cli = ["dep:clap"]
 
 # Convenience "everything" feature for local dev.
-all = ["candle-hf", "openai", "tei", "hf-inference", "fastembed", "ort-tokenizers", "burn-backend", "siglip", "serde"]
+all = [
+  "candle-hf", "openai", "tei", "hf-inference", "fastembed",
+  "ort-tokenizers", "burn-backend", "siglip", "serde",
+  "async-openai", "async-tei", "async-hf-inference",
+]
 
 [[example]]
 name = "hello_embed"
@@ -85,4 +100,3 @@ required-features = ["fastembed"]
 name = "embedd"
 path = "src/bin/embedd.rs"
 required-features = ["cli"]
-
