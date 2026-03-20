@@ -305,9 +305,9 @@ pub trait TextEmbedder: Send + Sync {
 
     /// Convenience: embed a single text, avoiding the `&[s.to_string()][0].clone()` boilerplate.
     fn embed_text(&self, text: &str, mode: EmbedMode) -> anyhow::Result<Vec<f32>> {
-        let mut results = self.embed_texts(&[text.to_string()], mode)?;
-        results
-            .pop()
+        self.embed_texts(&[text.to_string()], mode)?
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow::anyhow!("embed_texts returned empty"))
     }
 
@@ -580,16 +580,13 @@ pub mod hf_inference {
         }
 
         fn post_json<T: serde::Serialize>(&self, payload: &T) -> Result<serde_json::Value> {
-            let mut req = self
-                .client
-                .post(&self.endpoint())
-                .set("Content-Type", "application/json");
+            let mut req = self.client.post(&self.endpoint());
             if let Some(auth) = self.auth_header_value() {
                 req = req.set("Authorization", &auth);
             }
 
-            // ureq 2.x returns Err for non-2xx.
-            let resp = req.send_string(&serde_json::to_string(payload)?)?;
+            // ureq 2.x: send_json handles Content-Type + serialization; Err on non-2xx.
+            let resp = req.send_json(payload)?;
             let body = resp.into_string().unwrap_or_default();
             Ok(serde_json::from_str(&body)?)
         }
@@ -833,9 +830,8 @@ pub mod openai {
             let resp = self
                 .client
                 .post(&self.embeddings_endpoint())
-                .set("Content-Type", "application/json")
                 .set("Authorization", &format!("Bearer {}", self.api_key))
-                .send_string(&serde_json::to_string(&payload)?)?;
+                .send_json(&payload)?;
 
             let body = resp.into_string()?;
             let parsed: EmbeddingsResponse = serde_json::from_str(&body)?;
@@ -978,15 +974,12 @@ pub mod tei {
         fn embed_texts(&self, texts: &[String], mode: EmbedMode) -> Result<Vec<Vec<f32>>> {
             let payload = self.build_embed_payload(texts, mode);
 
-            let mut req = self
-                .client
-                .post(&self.embed_endpoint())
-                .set("Content-Type", "application/json");
+            let mut req = self.client.post(&self.embed_endpoint());
             if let Some(k) = &self.api_key {
                 req = req.set("Authorization", &format!("Bearer {k}"));
             }
-            // ureq 2.x returns Err for non-2xx.
-            let resp = req.send_string(&payload.to_string())?;
+            // ureq 2.x: send_json handles Content-Type + serialization; Err on non-2xx.
+            let resp = req.send_json(&payload)?;
             let body = resp.into_string()?;
             let embs: Vec<Vec<f32>> = serde_json::from_str(&body)?;
             Ok(embs)
@@ -1138,11 +1131,13 @@ pub mod fastembed {
             // Probe dimension once.
             let dimension = {
                 let mut guard = model.lock().expect("fastembed model mutex poisoned");
-                // fastembed requires a non-empty batch
                 let out = guard
                     .embed(vec!["probe"], None)
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                out.first().map(|v| v.len()).unwrap_or(0)
+                out.first()
+                    .map(|v| v.len())
+                    .filter(|&d| d > 0)
+                    .ok_or_else(|| anyhow::anyhow!("model returned zero-dim or empty embedding"))?
             };
 
             Ok(Self {
@@ -1630,6 +1625,8 @@ mod candle_hf {
             let config: BertConfig =
                 serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
             let device = Device::Cpu;
+            // SAFETY: safetensors header+offsets validated above. The mmap lifetime is
+            // bound to VarBuilder which owns the mapping; no aliased mutation occurs.
             let vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
             };
@@ -1668,6 +1665,7 @@ mod candle_hf {
                     let config: BertConfig =
                         serde_json::from_reader(BufReader::new(File::open(config_path)?))?;
                     let device = Device::Cpu;
+                    // SAFETY: see from_dir -- safetensors validated, mmap owned by VarBuilder.
                     let vb = unsafe {
                         VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
                     };
@@ -1744,13 +1742,11 @@ mod candle_hf {
                     .tokenizer
                     .encode(s, true)
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
-                let mut ids: Vec<u32> = enc.get_ids().iter().copied().collect();
-                let mut mask: Vec<u32> = enc.get_attention_mask().iter().copied().collect();
-
-                if ids.len() > self.max_len {
-                    ids.truncate(self.max_len);
-                    mask.truncate(self.max_len);
-                }
+                let ids = enc.get_ids();
+                let mask = enc.get_attention_mask();
+                let len = ids.len().min(self.max_len);
+                let ids: Vec<u32> = ids[..len].to_vec();
+                let mask: Vec<u32> = mask[..len].to_vec();
                 max_seq = max_seq.max(ids.len());
                 toks.push(ids);
                 masks.push(mask);
@@ -1765,10 +1761,15 @@ mod candle_hf {
                 }
             }
 
-            // Build tensors.
+            // Build tensors -- pre-allocated flat buffer avoids intermediate Vec from flatten.
             let bsz = toks.len();
-            let flat_ids: Vec<u32> = toks.into_iter().flatten().collect();
-            let flat_mask: Vec<u32> = masks.into_iter().flatten().collect();
+            let total = bsz * max_seq;
+            let mut flat_ids = Vec::with_capacity(total);
+            let mut flat_mask = Vec::with_capacity(total);
+            for (ids, mask) in toks.into_iter().zip(masks) {
+                flat_ids.extend_from_slice(&ids);
+                flat_mask.extend_from_slice(&mask);
+            }
             let input_ids =
                 Tensor::from_vec(flat_ids, (bsz, max_seq), &self.device)?.to_dtype(DType::I64)?;
             let attention_mask =
