@@ -35,9 +35,6 @@ fastembed = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }
 
-# Optional: burn backend
-burn = { workspace = true, optional = true }
-
 # Optional: Qdrant vector database
 qdrant-client = { workspace = true, optional = true }
 
@@ -77,8 +74,6 @@ tei = ["dep:ureq"]
 hf-inference = ["dep:ureq", "dep:serde"]
 fastembed = ["dep:fastembed"]
 ort-tokenizers = ["dep:ort", "dep:tokenizers"]
-burn-backend = ["dep:burn"]
-siglip = []
 qdrant = ["dep:qdrant-client", "dep:tokio"]
 
 # Async adapter backends (reqwest + tokio).
@@ -92,7 +87,7 @@ cli = ["dep:clap"]
 # Convenience "everything" feature for local dev.
 all = [
   "candle-hf", "openai", "tei", "hf-inference", "fastembed",
-  "ort-tokenizers", "burn-backend", "siglip", "serde",
+  "ort-tokenizers", "serde",
   "async-openai", "async-tei", "async-hf-inference",
   "qdrant",
 ]

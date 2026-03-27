@@ -1440,48 +1440,6 @@ pub mod ort {
     }
 }
 
-#[cfg(feature = "burn-backend")]
-pub mod burn {
-    /// Placeholder burn embedder.
-    pub struct BurnEmbedder;
-
-    impl BurnEmbedder {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-
-    impl super::TextEmbedder for BurnEmbedder {
-        fn embed_texts(
-            &self,
-            _texts: &[String],
-            _mode: super::EmbedMode,
-        ) -> anyhow::Result<Vec<Vec<f32>>> {
-            Err(anyhow::anyhow!("embedd::burn: not implemented yet"))
-        }
-    }
-}
-
-#[cfg(feature = "siglip")]
-pub mod siglip {
-    use super::ImageEmbedder;
-
-    /// Placeholder SigLIP embedder.
-    pub struct SiglipEmbedder;
-
-    impl SiglipEmbedder {
-        pub fn new() -> Self {
-            Self
-        }
-    }
-
-    impl ImageEmbedder for SiglipEmbedder {
-        fn embed_images(&self, _images: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<f32>>> {
-            Err(anyhow::anyhow!("embedd(siglip): not implemented yet"))
-        }
-    }
-}
-
 // --- Async backends ---
 
 #[cfg(feature = "async-openai")]
