@@ -569,6 +569,110 @@ pub trait AudioEmbedder: Send + Sync {
     }
 }
 
+// --- Reranker traits ---
+
+/// A reranking result: document index paired with a relevance score.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RerankResult {
+    /// Index of the document in the input slice.
+    pub index: usize,
+    /// Relevance score (higher is more relevant).
+    pub score: f32,
+}
+
+/// Rerank documents by relevance to a query using a cross-encoder model.
+pub trait Reranker: Send + Sync {
+    /// Score and rank documents by relevance to the query.
+    /// Returns results sorted by descending score.
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: Option<usize>,
+    ) -> anyhow::Result<Vec<RerankResult>>;
+
+    /// Model identifier, if available.
+    fn model_id(&self) -> Option<&str> {
+        None
+    }
+}
+
+// Ergonomics: allow `Box<dyn Reranker>` to be used wherever a `Reranker` is expected.
+impl<T: Reranker + ?Sized> Reranker for Box<T> {
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: Option<usize>,
+    ) -> anyhow::Result<Vec<RerankResult>> {
+        (**self).rerank(query, documents, top_k)
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        (**self).model_id()
+    }
+}
+
+/// Wraps a `Reranker` with batch size control.
+///
+/// Documents are scored in chunks of `batch_size`, then merged and sorted.
+/// This is useful for backends with memory constraints or rate limits.
+#[derive(Debug, Clone)]
+pub struct BatchingReranker<R> {
+    inner: R,
+    batch_size: usize,
+}
+
+impl<R> BatchingReranker<R> {
+    pub fn new(inner: R, batch_size: usize) -> Self {
+        Self {
+            inner,
+            batch_size: batch_size.max(1),
+        }
+    }
+
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl<R: Reranker> Reranker for BatchingReranker<R> {
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: Option<usize>,
+    ) -> anyhow::Result<Vec<RerankResult>> {
+        if documents.len() <= self.batch_size {
+            return self.inner.rerank(query, documents, top_k);
+        }
+        let mut all_results = Vec::new();
+        for (batch_idx, chunk) in documents.chunks(self.batch_size).enumerate() {
+            let chunk_vec: Vec<String> = chunk.to_vec();
+            let mut batch_results = self.inner.rerank(query, &chunk_vec, None)?;
+            // Adjust indices to be global.
+            for result in &mut batch_results {
+                result.index += batch_idx * self.batch_size;
+            }
+            all_results.extend(batch_results);
+        }
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if let Some(k) = top_k {
+            all_results.truncate(k);
+        }
+        Ok(all_results)
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        self.inner.model_id()
+    }
+}
+
 // --- Async trait ---
 
 /// Boxed future type used by `AsyncTextEmbedder` for object safety.
@@ -664,6 +768,29 @@ impl<E: TextEmbedder + 'static> AsyncTextEmbedder for AsyncSyncBridge<E> {
 
     fn dimension(&self) -> Option<usize> {
         self.inner.dimension()
+    }
+}
+
+/// Async counterpart of `Reranker`.
+///
+/// Object-safe via boxed futures. Gated on the same async features as `AsyncTextEmbedder`.
+#[cfg(any(
+    feature = "async-openai",
+    feature = "async-tei",
+    feature = "async-hf-inference",
+))]
+pub trait AsyncReranker: Send + Sync {
+    /// Score and rank documents by relevance to the query.
+    fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: Option<usize>,
+    ) -> BoxFuture<'_, anyhow::Result<Vec<RerankResult>>>;
+
+    /// Model identifier, if available.
+    fn model_id(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -1413,6 +1540,91 @@ pub mod fastembed {
                         .collect()
                 })
                 .collect())
+        }
+    }
+
+    // --- Reranker via fastembed ---
+
+    use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
+
+    #[allow(clippy::type_complexity)]
+    static RERANK_CACHE: OnceLock<&'static Mutex<HashMap<String, Arc<Mutex<TextRerank>>>>> =
+        OnceLock::new();
+
+    fn rerank_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<TextRerank>>>> {
+        RERANK_CACHE.get_or_init(|| Box::leak(Box::new(Mutex::new(HashMap::new()))))
+    }
+
+    /// Cross-encoder reranker backed by fastembed with process-wide model caching.
+    pub struct FastembedReranker {
+        model: Arc<Mutex<TextRerank>>,
+        model_id: String,
+    }
+
+    impl FastembedReranker {
+        /// Create a reranker with the default model (BGE Reranker Base).
+        pub fn new_default() -> Result<Self> {
+            Self::with_model(RerankerModel::BGERerankerBase)
+        }
+
+        /// Create a reranker with an explicit fastembed reranker model.
+        pub fn with_model(model_name: RerankerModel) -> Result<Self> {
+            let model = Self::get_or_init(model_name.clone())?;
+            let model_id = format!("fastembed-rerank:{:?}", model_name);
+            Ok(Self { model, model_id })
+        }
+
+        fn get_or_init(model_name: RerankerModel) -> Result<Arc<Mutex<TextRerank>>> {
+            let key = format!("{:?}", model_name);
+            let mut guard = rerank_cache()
+                .lock()
+                .expect("rerank model cache mutex poisoned");
+            if let Some(existing) = guard.get(&key) {
+                return Ok(Arc::clone(existing));
+            }
+            let model = TextRerank::try_new(
+                RerankInitOptions::new(model_name).with_show_download_progress(false),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let arc = Arc::new(Mutex::new(model));
+            guard.insert(key, Arc::clone(&arc));
+            Ok(arc)
+        }
+    }
+
+    impl super::Reranker for FastembedReranker {
+        fn rerank(
+            &self,
+            query: &str,
+            documents: &[String],
+            top_k: Option<usize>,
+        ) -> Result<Vec<super::RerankResult>> {
+            let refs: Vec<&str> = documents.iter().map(|s| s.as_str()).collect();
+            let mut guard = self.model.lock().expect("rerank model mutex poisoned");
+            let results = guard
+                .rerank(query, refs, false, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut out: Vec<super::RerankResult> = results
+                .into_iter()
+                .map(|r| super::RerankResult {
+                    index: r.index,
+                    score: r.score,
+                })
+                .collect();
+            // fastembed returns sorted by descending score, but re-sort to be safe.
+            out.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(k) = top_k {
+                out.truncate(k);
+            }
+            Ok(out)
+        }
+
+        fn model_id(&self) -> Option<&str> {
+            Some(&self.model_id)
         }
     }
 }
@@ -2861,5 +3073,126 @@ mod tests {
             let json = format!("{{{}}}", entries.join(","));
             safetensors::validate_header_and_data_len(json.as_bytes(), offset).unwrap();
         }
+    }
+
+    // --- Reranker tests ---
+
+    /// A mock reranker that returns documents scored by their length (longer = higher score).
+    struct LengthReranker;
+
+    impl Reranker for LengthReranker {
+        fn rerank(
+            &self,
+            _query: &str,
+            documents: &[String],
+            top_k: Option<usize>,
+        ) -> anyhow::Result<Vec<RerankResult>> {
+            let mut results: Vec<RerankResult> = documents
+                .iter()
+                .enumerate()
+                .map(|(i, doc)| RerankResult {
+                    index: i,
+                    score: doc.len() as f32,
+                })
+                .collect();
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(k) = top_k {
+                results.truncate(k);
+            }
+            Ok(results)
+        }
+
+        fn model_id(&self) -> Option<&str> {
+            Some("mock-length")
+        }
+    }
+
+    #[test]
+    fn rerank_result_sorted_by_score() {
+        let docs = vec![
+            "short".to_string(),
+            "a]medium length".to_string(),
+            "the longest document here".to_string(),
+        ];
+        let results = LengthReranker.rerank("query", &docs, None).unwrap();
+        assert_eq!(results.len(), 3);
+        // Longest first.
+        assert_eq!(results[0].index, 2);
+        assert_eq!(results[1].index, 1);
+        assert_eq!(results[2].index, 0);
+        // Scores descending.
+        assert!(results[0].score >= results[1].score);
+        assert!(results[1].score >= results[2].score);
+    }
+
+    #[test]
+    fn rerank_top_k_truncation() {
+        let docs = vec![
+            "a".to_string(),
+            "bb".to_string(),
+            "ccc".to_string(),
+            "dddd".to_string(),
+        ];
+        let results = LengthReranker.rerank("q", &docs, Some(2)).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].index, 3);
+        assert_eq!(results[1].index, 2);
+    }
+
+    #[test]
+    fn batching_reranker_matches_unbatched() {
+        let docs: Vec<String> = (0..10).map(|i| "x".repeat(i + 1)).collect();
+
+        let unbatched = LengthReranker.rerank("q", &docs, None).unwrap();
+        let batched = BatchingReranker::new(LengthReranker, 3)
+            .rerank("q", &docs, None)
+            .unwrap();
+
+        assert_eq!(unbatched.len(), batched.len());
+        // Same ordering and indices.
+        for (u, b) in unbatched.iter().zip(batched.iter()) {
+            assert_eq!(u.index, b.index);
+            assert!((u.score - b.score).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn batching_reranker_top_k() {
+        let docs: Vec<String> = (0..10).map(|i| "x".repeat(i + 1)).collect();
+        let results = BatchingReranker::new(LengthReranker, 4)
+            .rerank("q", &docs, Some(3))
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        // Top 3 longest: indices 9, 8, 7.
+        assert_eq!(results[0].index, 9);
+        assert_eq!(results[1].index, 8);
+        assert_eq!(results[2].index, 7);
+    }
+
+    #[test]
+    fn batching_reranker_small_input_delegates() {
+        // When docs fit in one batch, should behave identically.
+        let docs = vec!["hello".to_string(), "world".to_string()];
+        let direct = LengthReranker.rerank("q", &docs, None).unwrap();
+        let batched = BatchingReranker::new(LengthReranker, 100)
+            .rerank("q", &docs, None)
+            .unwrap();
+        assert_eq!(direct.len(), batched.len());
+        for (d, b) in direct.iter().zip(batched.iter()) {
+            assert_eq!(d.index, b.index);
+        }
+    }
+
+    #[test]
+    fn box_dyn_reranker() {
+        let reranker: Box<dyn Reranker> = Box::new(LengthReranker);
+        let docs = vec!["a".to_string(), "bbb".to_string()];
+        let results = reranker.rerank("q", &docs, None).unwrap();
+        assert_eq!(results[0].index, 1);
+        assert_eq!(reranker.model_id(), Some("mock-length"));
     }
 }
