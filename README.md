@@ -1,6 +1,6 @@
 # embedd
 
-Embedding interfaces + local backends (Candle/HF).
+Embedding interfaces and local backends.
 
 ## Usage
 
