@@ -8,7 +8,7 @@ mod fastembed_reranker {
     #[test]
     #[ignore]
     fn test_fastembed_reranker_real() {
-        let reranker = FastembedReranker::default()
+        let reranker = FastembedReranker::new_default()
             .expect("failed to initialize fastembed reranker (model download required)");
 
         let query = "What is machine learning?";

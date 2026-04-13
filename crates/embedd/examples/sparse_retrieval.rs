@@ -18,7 +18,7 @@ fn main() -> anyhow::Result<()> {
     let query = "quick fox".to_string();
 
     let doc_vecs = sparse.embed_sparse(&docs, EmbedMode::Document)?;
-    let query_vecs = sparse.embed_sparse(&[query.clone()], EmbedMode::Query)?;
+    let query_vecs = sparse.embed_sparse(std::slice::from_ref(&query), EmbedMode::Query)?;
     let query_vec = &query_vecs[0];
 
     println!("\nQuery: \"{query}\"");

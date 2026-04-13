@@ -90,6 +90,7 @@ fn read_lines(path: Option<std::path::PathBuf>) -> anyhow::Result<Vec<String>> {
     Ok(out)
 }
 
+#[allow(clippy::type_complexity)]
 fn l2_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, Option<(f64, f64, f64, f64)>) {
     let mut wrong_dim = 0usize;
     let mut non_finite = 0usize;
@@ -276,6 +277,6 @@ fn main() -> anyhow::Result<()> {
         obj.insert("l2_norm_std".into(), serde_json::Value::from(std));
     }
 
-    println!("{}", serde_json::Value::Object(obj).to_string());
+    println!("{}", serde_json::Value::Object(obj));
     Ok(())
 }

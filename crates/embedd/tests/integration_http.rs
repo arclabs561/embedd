@@ -81,7 +81,7 @@ fn integration_openai_smoke_opt_in() {
     let model = std::env::var("EMBEDD_OPENAI_MODEL")
         .unwrap_or_else(|_| "text-embedding-3-small".to_string());
 
-    let embedder = embedd::openai::OpenAiEmbedder::new(base_url, api_key, model);
+    let embedder = embedd::openai::OpenAiEmbedder::new(api_key, model).with_base_url(base_url);
 
     let texts = vec![
         "Marie Curie discovered radium in Paris.".to_string(),

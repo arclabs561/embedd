@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     // A small corpus about programming languages.
-    let corpus = vec![
+    let corpus = [
         "Rust is a systems programming language focused on safety and performance.",
         "Python is widely used for data science, machine learning, and scripting.",
         "JavaScript runs in browsers and powers most interactive web applications.",
