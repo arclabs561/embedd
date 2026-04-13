@@ -2306,7 +2306,10 @@ pub mod safetensors {
 
 /// Vector post-processing helpers (L0-backed).
 pub mod vector {
-    use innr::{cosine, dot, norm, NORM_EPSILON};
+    use innr::{cosine, dot, norm};
+
+    /// Threshold below which a vector is considered near-zero.
+    const NORM_EPSILON: f32 = 1e-9;
 
     /// Compute the L2 norm of a vector.
     pub fn l2_norm(v: &[f32]) -> f32 {
@@ -2315,7 +2318,7 @@ pub mod vector {
 
     /// In-place L2 normalization.
     ///
-    /// Returns the original norm. If the vector is near-zero (\(<\) `innr::NORM_EPSILON`),
+    /// Returns the original norm. If the vector is near-zero (< `NORM_EPSILON`),
     /// this is a no-op and returns 0.0.
     pub fn l2_normalize_in_place(v: &mut [f32]) -> f32 {
         let n = norm(v);
