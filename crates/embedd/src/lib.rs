@@ -1300,7 +1300,8 @@ pub mod tei {
     mod tests {
         use super::TeiEmbedder;
         use crate::{
-            EmbedMode, Normalization, PromptApplication, TruncationDirection, TruncationPolicy,
+            EmbedMode, Normalization, PromptApplication, TextEmbedder, TruncationDirection,
+            TruncationPolicy,
         };
 
         fn obj(v: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
@@ -1640,6 +1641,12 @@ pub mod ort {
     impl OrtEmbedder {
         pub fn new() -> Self {
             Self
+        }
+    }
+
+    impl Default for OrtEmbedder {
+        fn default() -> Self {
+            Self::new()
         }
     }
 

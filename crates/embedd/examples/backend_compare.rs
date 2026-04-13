@@ -719,9 +719,9 @@ fn make_openai() -> anyhow::Result<Box<dyn TextEmbedder>> {
         .unwrap_or_else(|_| "https://api.openai.com".to_string());
     let model = std::env::var("EMBEDD_OPENAI_MODEL")
         .unwrap_or_else(|_| "text-embedding-3-small".to_string());
-    Ok(Box::new(embedd::openai::OpenAiEmbedder::new(
-        base_url, api_key, model,
-    )))
+    Ok(Box::new(
+        embedd::openai::OpenAiEmbedder::new(api_key, model).with_base_url(base_url),
+    ))
 }
 
 #[cfg(not(feature = "openai"))]
