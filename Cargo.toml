@@ -43,7 +43,7 @@ fastembed = "5.8.1"
 qdrant-client = "1.16"
 
 # Tekne primitive (published separately; used by `embedd::vector`)
-innr = "0.1.8"
+innr = "0.2"
 
 [patch.crates-io]
 # When developing in this repo, use the local workspace crates instead of crates.io.
