@@ -366,6 +366,7 @@ fn load_blob_corpus_from_env(
     )))
 }
 
+#[allow(clippy::type_complexity)]
 fn compute_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, usize, Option<(f32, f32, f32, f32)>) {
     // Returns:
     // (dim, wrong_dim, non_finite, n_valid, norm_stats(min,max,mean,std))
@@ -424,6 +425,7 @@ fn compute_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, usize, Option<(f32,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_stats_artifact(
     out_path: &Path,
     backend: &str,
@@ -759,6 +761,7 @@ fn make_hf_inference() -> anyhow::Result<()> {
     ))
 }
 
+#[allow(clippy::type_complexity)]
 fn main() -> anyhow::Result<()> {
     let backend = std::env::var("EMBEDD_BACKEND").unwrap_or_else(|_| "tei".to_string());
     let modality = parse_modality()?;

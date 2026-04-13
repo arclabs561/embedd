@@ -244,6 +244,7 @@ fn load_blob_corpus_from_env(modality: Modality) -> anyhow::Result<Option<Vec<Ve
     Ok(Some(load_blob_corpus_from_paths(&paths)?))
 }
 
+#[allow(clippy::type_complexity)]
 fn compute_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, usize, Option<(f32, f32, f32, f32)>) {
     if embs.is_empty() {
         return (0, 0, 0, 0, None);
@@ -385,7 +386,7 @@ fn main() -> anyhow::Result<()> {
     if out_path
         .extension()
         .and_then(|s| s.to_str())
-        .is_none_or(|s| !s.eq_ignore_ascii_case("jsonl"))
+        .map_or(true, |s| !s.eq_ignore_ascii_case("jsonl"))
     {
         return Err(anyhow::anyhow!(
             "EMBEDD_STATS_OUT must be a .jsonl path for backend_matrix"
