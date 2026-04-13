@@ -2986,6 +2986,9 @@ mod candle_hf {
 #[cfg(feature = "candle-hf")]
 pub use candle_hf::{LocalHfEmbedder, ModelArch, StellaEmbedder};
 
+#[cfg(feature = "fastembed")]
+pub use fastembed::FastembedReranker;
+
 #[cfg(test)]
 mod tests {
     use super::*;
