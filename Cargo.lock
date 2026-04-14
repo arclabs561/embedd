@@ -1843,9 +1843,9 @@ dependencies = [
 
 [[package]]
 name = "innr"
-version = "0.1.9"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f75d0b29074c87add080dab7566c3a11854cd90a315af73fa5537b4643234142"
+checksum = "761791b2bc31ea3295c68c48bf1378402684ebcf47202c65f3226ef7affb8bc3"
 
 [[package]]
 name = "interpolate_name"
@@ -4726,4 +4726,4 @@ dependencies = [
 
 [[patch.unused]]
 name = "textprep"
-version = "0.1.4"
+version = "0.1.5"
