@@ -1818,6 +1818,54 @@ pub mod ort {
             })
         }
 
+        /// Load a cross-encoder from HuggingFace Hub by model ID.
+        ///
+        /// Downloads `model.onnx` (or `onnx/model.onnx`) and `tokenizer.json`
+        /// to the HF cache directory. Subsequent calls use the cached files.
+        ///
+        /// ```ignore
+        /// // Default: ms-marco-MiniLM-L-6-v2 (80 MB, fastest)
+        /// let reranker = OrtReranker::from_hf_hub(
+        ///     "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        /// )?;
+        /// ```
+        pub fn from_hf_hub(model_id: &str) -> Result<Self> {
+            let api = hf_hub::api::sync::Api::new()?;
+            let repo = api.model(model_id.to_string());
+
+            let tokenizer_path = repo
+                .get("tokenizer.json")
+                .with_context(|| format!("downloading tokenizer.json from {model_id}"))?;
+
+            // Try onnx/model.onnx first (optimum export convention), then model.onnx.
+            let model_path = repo
+                .get("onnx/model.onnx")
+                .or_else(|_| repo.get("model.onnx"))
+                .with_context(|| {
+                    format!("downloading model.onnx from {model_id} (tried onnx/model.onnx and model.onnx)")
+                })?;
+
+            let session = ort::session::Session::builder()?
+                .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
+                .commit_from_file(&model_path)
+                .with_context(|| format!("loading ONNX model from {}", model_path.display()))?;
+
+            let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
+                .map_err(|e| anyhow::anyhow!("loading tokenizer: {e}"))?;
+
+            let needs_token_type_ids = session
+                .inputs()
+                .iter()
+                .any(|input| input.name() == "token_type_ids");
+
+            Ok(Self {
+                session: std::sync::Mutex::new(session),
+                tokenizer,
+                needs_token_type_ids,
+                model_id: Some(model_id.to_string()),
+            })
+        }
+
         /// Score a batch of query-document pairs. Returns raw logit scores.
         fn score_pairs(&self, query: &str, documents: &[String]) -> Result<Vec<f32>> {
             if documents.is_empty() {

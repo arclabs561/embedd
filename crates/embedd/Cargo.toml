@@ -73,7 +73,7 @@ openai = ["dep:ureq", "dep:serde"]
 tei = ["dep:ureq"]
 hf-inference = ["dep:ureq", "dep:serde"]
 fastembed = ["dep:fastembed"]
-ort-tokenizers = ["dep:ort", "dep:tokenizers"]
+ort-tokenizers = ["dep:ort", "dep:tokenizers", "dep:hf-hub"]
 qdrant = ["dep:qdrant-client", "dep:tokio"]
 
 # Async adapter backends (reqwest + tokio).
