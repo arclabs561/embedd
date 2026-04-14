@@ -55,6 +55,10 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 name = "embedd_bench"
 harness = false
 
+[[example]]
+name = "rerank_ort"
+required-features = ["ort-tokenizers"]
+
 [features]
 default = []
 serde = ["dep:serde"]
