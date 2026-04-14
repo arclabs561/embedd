@@ -1866,6 +1866,16 @@ pub mod ort {
             })
         }
 
+        /// Run a dummy inference to warm up the ONNX Runtime session.
+        ///
+        /// ONNX Runtime JIT-compiles kernels on first use, causing a multi-second
+        /// latency spike. Call this once after construction to absorb that cost
+        /// before serving live traffic.
+        pub fn warmup(&self) -> Result<()> {
+            self.score_pairs("warmup", &["warmup".to_string()])?;
+            Ok(())
+        }
+
         /// Score a batch of query-document pairs. Returns raw logit scores.
         fn score_pairs(&self, query: &str, documents: &[String]) -> Result<Vec<f32>> {
             if documents.is_empty() {
