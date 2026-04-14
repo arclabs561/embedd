@@ -333,6 +333,104 @@ impl<E: TextEmbedder> TextEmbedder for BatchingTextEmbedder<E> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Embedding cache wrapper
+// ---------------------------------------------------------------------------
+
+/// Wrapper that caches embedding results, avoiding redundant backend calls.
+///
+/// Cache key is `(model_id, mode, text)`. Texts already in the cache are returned
+/// directly; only cache misses are forwarded to the inner embedder.
+///
+/// ```ignore
+/// use embedd::{CachingTextEmbedder, EmbedMode};
+///
+/// let cached = CachingTextEmbedder::new(inner_embedder);
+/// let v1 = cached.embed_text("hello", EmbedMode::Document)?;  // calls backend
+/// let v2 = cached.embed_text("hello", EmbedMode::Document)?;  // cache hit
+/// assert_eq!(v1, v2);
+/// ```
+pub struct CachingTextEmbedder<E> {
+    inner: E,
+    cache: std::sync::Mutex<std::collections::HashMap<(String, u8), Vec<f32>>>,
+}
+
+impl<E> CachingTextEmbedder<E> {
+    /// Wrap an embedder with an in-memory cache.
+    pub fn new(inner: E) -> Self {
+        Self {
+            inner,
+            cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Number of cached entries.
+    pub fn cache_len(&self) -> usize {
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// Clear all cached embeddings.
+    pub fn clear_cache(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+}
+
+impl<E: TextEmbedder> TextEmbedder for CachingTextEmbedder<E> {
+    fn embed_texts(&self, texts: &[String], mode: EmbedMode) -> anyhow::Result<Vec<Vec<f32>>> {
+        let mode_key = match mode {
+            EmbedMode::Query => 0u8,
+            EmbedMode::Document => 1u8,
+        };
+
+        let mut results: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        let mut miss_indices: Vec<usize> = Vec::new();
+        let mut miss_texts: Vec<String> = Vec::new();
+
+        // Check cache for each text.
+        {
+            let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            for (i, text) in texts.iter().enumerate() {
+                let key = (text.clone(), mode_key);
+                if let Some(vec) = cache.get(&key) {
+                    results[i] = Some(vec.clone());
+                } else {
+                    miss_indices.push(i);
+                    miss_texts.push(text.clone());
+                }
+            }
+        }
+
+        // Embed cache misses.
+        if !miss_texts.is_empty() {
+            let embedded = self.inner.embed_texts(&miss_texts, mode)?;
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            for (j, idx) in miss_indices.iter().enumerate() {
+                if let Some(vec) = embedded.get(j) {
+                    cache.insert((texts[*idx].clone(), mode_key), vec.clone());
+                    results[*idx] = Some(vec.clone());
+                }
+            }
+        }
+
+        Ok(results.into_iter().map(|r| r.unwrap_or_default()).collect())
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        self.inner.model_id()
+    }
+
+    fn dimension(&self) -> Option<usize> {
+        self.inner.dimension()
+    }
+
+    fn capabilities(&self) -> TextEmbedderCapabilities {
+        self.inner.capabilities()
+    }
+}
+
 /// Minimal interface for "text → dense vector" encoders (bi-encoder style).
 ///
 /// This covers the common "sentence embedding" family: one vector per input string.
@@ -3086,6 +3184,89 @@ mod tests {
             let json = format!("{{{}}}", entries.join(","));
             safetensors::validate_header_and_data_len(json.as_bytes(), offset).unwrap();
         }
+    }
+
+    // --- Caching tests ---
+
+    /// A mock embedder that counts calls.
+    struct CountingEmbedder {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingEmbedder {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn call_count(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl TextEmbedder for CountingEmbedder {
+        fn embed_texts(&self, texts: &[String], _mode: EmbedMode) -> anyhow::Result<Vec<Vec<f32>>> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(texts.iter().map(|t| vec![t.len() as f32]).collect())
+        }
+        fn model_id(&self) -> Option<&str> {
+            Some("counter")
+        }
+    }
+
+    #[test]
+    fn caching_embedder_avoids_redundant_calls() {
+        let inner = CountingEmbedder::new();
+        let cached = CachingTextEmbedder::new(inner);
+
+        let texts = vec!["hello".to_string(), "world".to_string()];
+        let r1 = cached.embed_texts(&texts, EmbedMode::Document).unwrap();
+        assert_eq!(cached.cache_len(), 2);
+        assert_eq!(r1, vec![vec![5.0], vec![5.0]]);
+
+        // Second call with same texts: should be fully cached.
+        let r2 = cached.embed_texts(&texts, EmbedMode::Document).unwrap();
+        assert_eq!(r1, r2);
+        // Inner embedder called only once (for the first batch).
+        assert_eq!(cached.inner.call_count(), 1);
+    }
+
+    #[test]
+    fn caching_embedder_mode_separation() {
+        let cached = CachingTextEmbedder::new(CountingEmbedder::new());
+        let texts = vec!["hi".to_string()];
+
+        cached.embed_texts(&texts, EmbedMode::Query).unwrap();
+        cached.embed_texts(&texts, EmbedMode::Document).unwrap();
+        // Different modes -> different cache entries.
+        assert_eq!(cached.cache_len(), 2);
+        assert_eq!(cached.inner.call_count(), 2);
+    }
+
+    #[test]
+    fn caching_embedder_partial_hits() {
+        let cached = CachingTextEmbedder::new(CountingEmbedder::new());
+
+        // First: cache "a"
+        cached
+            .embed_texts(&["a".to_string()], EmbedMode::Document)
+            .unwrap();
+        assert_eq!(cached.inner.call_count(), 1);
+
+        // Second: "a" (hit) + "b" (miss) -> only "b" forwarded
+        let r = cached
+            .embed_texts(&["a".to_string(), "b".to_string()], EmbedMode::Document)
+            .unwrap();
+        assert_eq!(r, vec![vec![1.0], vec![1.0]]);
+        assert_eq!(cached.inner.call_count(), 2);
+        assert_eq!(cached.cache_len(), 2);
+
+        // Third: both cached
+        cached
+            .embed_texts(&["a".to_string(), "b".to_string()], EmbedMode::Document)
+            .unwrap();
+        assert_eq!(cached.inner.call_count(), 2); // no new calls
     }
 
     // --- Reranker tests ---
