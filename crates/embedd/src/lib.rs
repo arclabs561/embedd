@@ -371,10 +371,7 @@ impl<E> CachingTextEmbedder<E> {
 
     /// Clear all cached embeddings.
     pub fn clear_cache(&self) {
-        self.cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -3206,8 +3203,7 @@ mod tests {
 
     impl TextEmbedder for CountingEmbedder {
         fn embed_texts(&self, texts: &[String], _mode: EmbedMode) -> anyhow::Result<Vec<Vec<f32>>> {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(texts.iter().map(|t| vec![t.len() as f32]).collect())
         }
         fn model_id(&self) -> Option<&str> {
