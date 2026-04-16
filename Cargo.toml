@@ -42,10 +42,4 @@ fastembed = "5.8.1"
 # Vector DB client
 qdrant-client = "1.16"
 
-# Tekne primitive (published separately; used by `embedd::vector`)
 innr = "0.2"
-
-[patch.crates-io]
-# When developing in this repo, use the local workspace crates instead of crates.io.
-# (This keeps `Cargo.toml` publishable: deps are versioned, patch is only for local resolution.)
-embedd = { path = "crates/embedd" }
