@@ -2116,7 +2116,7 @@ pub mod safetensors {
     }
 }
 
-/// Vector post-processing helpers (L0-backed).
+/// Vector post-processing helpers (backed by `innr` SIMD primitives).
 pub mod vector {
     use innr::{cosine, dot, norm};
 

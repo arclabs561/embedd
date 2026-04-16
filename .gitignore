@@ -2,5 +2,6 @@ target/
 **/target/
 .DS_Store
 .claude/
+.cargo/config.toml
 .fastembed_cache/
 Cargo.lock
