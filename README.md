@@ -2,15 +2,7 @@
 
 Embedding interfaces and local backends.
 
-## Usage
-
-This repo’s publishable crate lives at `crates/embedd/`.
-
-```bash
-cargo test -p embedd
-```
-
-See **`crates/embedd/README.md`** for the library documentation, feature flags, and supported models.
+See [`crates/embedd/README.md`](crates/embedd/README.md) for usage, feature flags, and supported models.
 
 ## License
 

@@ -1,9 +1,8 @@
 # embedd
 
-One API to swap between local and remote embedding backends without changing call sites.
-
-Enable `fastembed` or `candle-hf` for local inference. Switch to `openai`, `tei`, or
-`hf-inference` for remote backends. The same `TextEmbedder` trait covers both.
+Embedding interfaces and local backends. A shared `TextEmbedder` trait
+across local (fastembed, candle) and remote (OpenAI, TEI, HF Inference)
+providers.
 
 ```toml
 [dependencies]
