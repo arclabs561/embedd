@@ -15,16 +15,13 @@ fn detect_arch(config_json: &serde_json::Value) -> &'static str {
         Some("distilbert") => "DistilBert",
         Some("xlm-roberta") => "XlmRoberta",
         Some("modernbert") => "ModernBert",
-        Some("bert") => {
+        Some("bert")
             if config_json
                 .get("position_embedding_type")
                 .and_then(|v| v.as_str())
-                == Some("alibi")
-            {
-                "JinaBert"
-            } else {
-                "Bert"
-            }
+                == Some("alibi") =>
+        {
+            "JinaBert"
         }
         _ => "Bert",
     }
