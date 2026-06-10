@@ -15,7 +15,7 @@ categories = ["science", "text-processing"]
 
 [dependencies]
 anyhow.workspace = true
-innr = "0.2"
+innr = "0.4"
 once_cell.workspace = true
 serde_json.workspace = true
 clap = { workspace = true, optional = true, features = ["derive"] }
