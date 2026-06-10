@@ -42,4 +42,4 @@ fastembed = "5.8.1"
 # Vector DB client
 qdrant-client = "1.16"
 
-innr = "0.2"
+innr = "0.4"
