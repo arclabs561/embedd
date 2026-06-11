@@ -15,9 +15,6 @@ homepage = "https://github.com/arclabs561/embedd"
 documentation = "https://docs.rs/embedd"
 
 [workspace.dependencies]
-# Workspace crate
-embedd = { path = "crates/embedd", version = "0.1.0" }
-
 # External deps (pinned for publishable, reproducible builds)
 anyhow = "1.0"
 once_cell = "1.19"
@@ -42,4 +39,3 @@ fastembed = "5.8.1"
 # Vector DB client
 qdrant-client = "1.16"
 
-innr = "0.4"
