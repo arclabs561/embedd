@@ -66,8 +66,14 @@ impl OrtReranker {
             dir.display()
         );
 
-        let session = ort::session::Session::builder()?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
+        // map_err: ort >= 2.0.0-rc.12 builder errors carry the builder back
+        // (Error<SessionBuilder>), which is not Send + Sync, so `?` into
+        // anyhow no longer converts directly.
+        let builder = ort::session::Session::builder()
+            .map_err(|e| anyhow::anyhow!("creating ONNX session builder: {e}"))?;
+        let session = builder
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::anyhow!("setting ONNX optimization level: {e}"))?
             .commit_from_file(&model_path)
             .with_context(|| format!("loading ONNX model from {}", model_path.display()))?;
 
@@ -118,8 +124,14 @@ impl OrtReranker {
                 )
             })?;
 
-        let session = ort::session::Session::builder()?
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)?
+        // map_err: ort >= 2.0.0-rc.12 builder errors carry the builder back
+        // (Error<SessionBuilder>), which is not Send + Sync, so `?` into
+        // anyhow no longer converts directly.
+        let builder = ort::session::Session::builder()
+            .map_err(|e| anyhow::anyhow!("creating ONNX session builder: {e}"))?;
+        let session = builder
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::anyhow!("setting ONNX optimization level: {e}"))?
             .commit_from_file(&model_path)
             .with_context(|| format!("loading ONNX model from {}", model_path.display()))?;
 
