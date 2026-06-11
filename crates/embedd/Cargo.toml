@@ -114,5 +114,6 @@ required-features = ["fastembed"]
 
 [[bin]]
 name = "embedd"
+test = false
 path = "src/bin/embedd.rs"
 required-features = ["cli"]
