@@ -90,11 +90,12 @@ let vecs = sparse.embed_sparse(&["hello world".into()], EmbedMode::Document)?;
 ## Examples
 
 ```sh
+cargo run -p embedd --example policy_pipeline
 cargo run -p embedd --example hello_embed --features fastembed
 ```
 
-Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`)
-and `rerank_ort` (`ort-tokenizers`).
+Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`),
+`backend_matrix`, `backend_compare`, and `rerank_ort` (`ort-tokenizers`).
 
 ## Related
 
