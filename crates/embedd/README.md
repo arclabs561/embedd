@@ -88,6 +88,12 @@ let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 Wrappers: `PromptedTextEmbedder` (instruction prefix), `L2NormalizedTextEmbedder`,
 `TruncateDimTextEmbedder` (matryoshka truncation), `BatchingTextEmbedder` (batch size control).
 
+Run the no-network policy example to see these wrappers compose:
+
+```sh
+cargo run -p embedd --example policy_pipeline
+```
+
 ## Sparse embeddings
 
 ```rust
