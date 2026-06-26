@@ -59,6 +59,10 @@ harness = false
 name = "rerank_ort"
 required-features = ["ort-tokenizers"]
 
+[[example]]
+name = "metal_bench"
+required-features = ["candle-hf"]
+
 [features]
 default = []
 serde = ["dep:serde"]
@@ -70,6 +74,18 @@ candle-hf = [
   "dep:candle-transformers",
   "dep:hf-hub",
   "dep:tokenizers",
+]
+
+# Compute-device acceleration for the Candle backend. The backend auto-selects
+# the best available device (see pick_device): Metal on Apple Silicon, CUDA on
+# NVIDIA, else CPU. `accelerate` speeds the CPU path via Apple's Accelerate BLAS.
+metal = ["candle-hf", "candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+cuda = ["candle-hf", "candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+accelerate = [
+  "candle-hf",
+  "candle-core/accelerate",
+  "candle-nn/accelerate",
+  "candle-transformers/accelerate",
 ]
 
 # Sync adapter backends.

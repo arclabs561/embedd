@@ -2185,6 +2185,28 @@ mod candle_hf {
 
     static EMBEDDER: OnceCell<std::sync::Mutex<LocalHfEmbedder>> = OnceCell::new();
 
+    /// Select the best available compute device for the enabled features, falling
+    /// back to CPU. Metal on Apple Silicon (`metal` feature), CUDA on NVIDIA
+    /// (`cuda` feature), else CPU. A failed accelerator init logs and falls back,
+    /// so a missing GPU never breaks embedding.
+    fn pick_device() -> Device {
+        #[cfg(feature = "metal")]
+        {
+            match Device::new_metal(0) {
+                Ok(d) => return d,
+                Err(e) => eprintln!("embedd: Metal device unavailable, using CPU: {e}"),
+            }
+        }
+        #[cfg(feature = "cuda")]
+        {
+            match Device::new_cuda(0) {
+                Ok(d) => return d,
+                Err(e) => eprintln!("embedd: CUDA device unavailable, using CPU: {e}"),
+            }
+        }
+        Device::Cpu
+    }
+
     /// Detected model architecture, used to dispatch the correct forward pass.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ModelArch {
@@ -2320,7 +2342,7 @@ mod candle_hf {
             let arch = detect_arch(&config_json);
             let hdim = hidden_size(&config_json);
 
-            let device = Device::Cpu;
+            let device = pick_device();
             // SAFETY: safetensors header+offsets validated above. The mmap lifetime is
             // bound to VarBuilder which owns the mapping; no aliased mutation occurs.
             let vb = unsafe {
@@ -2364,7 +2386,7 @@ mod candle_hf {
                     let arch = detect_arch(&config_json);
                     let hdim = hidden_size(&config_json);
 
-                    let device = Device::Cpu;
+                    let device = pick_device();
                     // SAFETY: see from_dir -- safetensors validated, mmap owned by VarBuilder.
                     let vb = unsafe {
                         VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
@@ -2644,7 +2666,7 @@ mod candle_hf {
                 serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
             let cfg = stella_config(&config_json, edim)?;
 
-            let device = Device::Cpu;
+            let device = pick_device();
 
             // SAFETY: safetensors validated above, mmap owned by VarBuilder.
             let base_vb = unsafe {
@@ -2688,7 +2710,7 @@ mod candle_hf {
                 serde_json::from_reader(BufReader::new(File::open(&config_path)?))?;
             let cfg = stella_config(&config_json, edim)?;
 
-            let device = Device::Cpu;
+            let device = pick_device();
 
             // SAFETY: safetensors validated above, mmap owned by VarBuilder.
             let base_vb = unsafe {
