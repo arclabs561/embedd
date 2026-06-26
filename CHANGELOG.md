@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-06-26
+
+### Added
+
+- Compute-device acceleration for the Candle backend: new `metal`, `cuda`, and `accelerate` features. The backend auto-selects the best available device via `pick_device` (Metal on Apple Silicon, CUDA on NVIDIA, else CPU), falling back to CPU on any accelerator init failure so a missing GPU never breaks embedding. Measured 6.2x faster than CPU for BGE-small on Apple Silicon (512 texts: 0.75s vs 4.63s; `examples/metal_bench.rs`). Default build is unchanged.
+
 ## [0.2.2] - 2026-06-10
 
 ### Fixed
