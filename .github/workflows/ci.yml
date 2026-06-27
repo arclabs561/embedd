@@ -24,8 +24,11 @@ jobs:
       - name: Clippy (default features)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # `all` is the curated convenience feature; it excludes the platform-specific
+      # GPU features (metal/cuda), which cannot build on the Linux runner. Using
+      # `--all-features` here would pull macOS-only Candle Metal crates and fail.
       - name: Clippy (all features)
-        run: cargo clippy -p embedd --all-targets --all-features -- -D warnings
+        run: cargo clippy -p embedd --all-targets --features all -- -D warnings
 
   # Feature combination matrix -- the main risk surface for this crate.
   features:

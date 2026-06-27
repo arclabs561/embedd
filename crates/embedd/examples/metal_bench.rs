@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     let emb = LocalHfEmbedder::new(&src)?;
 
     // Warm up (graph + device init), then time the full batch.
-    let _ = emb.embed_texts(&texts[..16.min(texts.len())].to_vec(), EmbedMode::Document)?;
+    let _ = emb.embed_texts(&texts[..16.min(texts.len())], EmbedMode::Document)?;
     let t = Instant::now();
     let out = emb.embed_texts(&texts, EmbedMode::Document)?;
     let dt = t.elapsed().as_secs_f64();
