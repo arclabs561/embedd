@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] - 2026-06-27
+
+### Fixed
+
+- Candle backend: pool per the model's convention instead of always mean-pooling. BGE-family models pool the CLS token; mean-pooling them silently degraded retrieval (BEIR SciFact bge-base nDCG@10 0.474 vs 0.731 with correct pooling). Pooling is now read from the model's `1_Pooling/config.json` (CLS when `pooling_mode_cls_token`, else mean). This changes the embeddings BGE models produce through the Candle backend, so re-embed BGE stores built with 0.3.
+
 ## [0.3.0] - 2026-06-26
 
 ### Added
