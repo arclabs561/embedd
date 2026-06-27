@@ -2311,6 +2311,29 @@ mod candle_hf {
         }
     }
 
+    /// Sentence-embedding pooling strategy. BGE-family models pool the CLS token;
+    /// most sentence-transformers (MiniLM, E5, GTE) mean-pool. Using the wrong one
+    /// silently degrades retrieval quality, so it is read per-model from the
+    /// `1_Pooling/config.json` the sentence-transformers convention ships.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Pooling {
+        Cls,
+        Mean,
+    }
+
+    /// Read the pooling strategy from a `1_Pooling/config.json` value; default to
+    /// mean when the file is absent or does not request CLS pooling.
+    fn pooling_from_config(v: &serde_json::Value) -> Pooling {
+        if v.get("pooling_mode_cls_token")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false)
+        {
+            Pooling::Cls
+        } else {
+            Pooling::Mean
+        }
+    }
+
     /// Local embedding inference via HuggingFace Hub + Candle (CPU).
     ///
     /// Supports BERT, JinaBERT, DistilBERT, XLM-RoBERTa, and ModernBERT.
@@ -2322,6 +2345,7 @@ mod candle_hf {
         arch: ModelArch,
         device: Device,
         hidden_dim: usize,
+        pooling: Pooling,
         query_prefix: String,
         doc_prefix: String,
         max_len: usize,
@@ -2354,6 +2378,13 @@ mod candle_hf {
 
             let max_len = Self::resolve_max_len();
             let prompt = super::PromptTemplate::from_env_any();
+            let pooling = File::open(dir.join("1_Pooling/config.json"))
+                .ok()
+                .and_then(|f| {
+                    serde_json::from_reader::<_, serde_json::Value>(BufReader::new(f)).ok()
+                })
+                .map(|v| pooling_from_config(&v))
+                .unwrap_or(Pooling::Mean);
 
             Ok(Self {
                 model_id: label.to_string(),
@@ -2362,6 +2393,7 @@ mod candle_hf {
                 arch,
                 device,
                 hidden_dim: hdim,
+                pooling,
                 query_prefix: prompt.query_prefix,
                 doc_prefix: prompt.doc_prefix,
                 max_len,
@@ -2398,6 +2430,15 @@ mod candle_hf {
 
                     let max_len = Self::resolve_max_len();
                     let prompt = super::PromptTemplate::from_env_any();
+                    let pooling = repo
+                        .get("1_Pooling/config.json")
+                        .ok()
+                        .and_then(|p| File::open(p).ok())
+                        .and_then(|f| {
+                            serde_json::from_reader::<_, serde_json::Value>(BufReader::new(f)).ok()
+                        })
+                        .map(|v| pooling_from_config(&v))
+                        .unwrap_or(Pooling::Mean);
 
                     Ok(Self {
                         model_id: model_id.to_string(),
@@ -2406,6 +2447,7 @@ mod candle_hf {
                         arch,
                         device,
                         hidden_dim: hdim,
+                        pooling,
                         query_prefix: prompt.query_prefix,
                         doc_prefix: prompt.doc_prefix,
                         max_len,
@@ -2519,13 +2561,20 @@ mod candle_hf {
         fn embed_texts_inner(&self, texts: &[String], is_query: bool) -> Result<Vec<Vec<f32>>> {
             let (ys, attention_mask, _) = self.forward_inner(texts, is_query)?;
 
-            // Mean-pool with attention mask, then L2 normalize.
+            // Pool per the model's convention, then L2 normalize.
             let ys = ys.to_dtype(DType::F32)?;
-            let mask_f = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?;
-            let masked = ys.broadcast_mul(&mask_f)?;
-            let sum = masked.sum(1)?;
-            let denom = mask_f.sum(1)?.clamp(1e-6, f32::MAX)?;
-            let pooled = sum.broadcast_div(&denom)?;
+            let pooled = match self.pooling {
+                // CLS pooling: the first token's hidden state (BGE family).
+                Pooling::Cls => ys.narrow(1, 0, 1)?.squeeze(1)?,
+                // Mean pooling over non-padding tokens (MiniLM, E5, GTE, ...).
+                Pooling::Mean => {
+                    let mask_f = attention_mask.to_dtype(DType::F32)?.unsqueeze(2)?;
+                    let masked = ys.broadcast_mul(&mask_f)?;
+                    let sum = masked.sum(1)?;
+                    let denom = mask_f.sum(1)?.clamp(1e-6, f32::MAX)?;
+                    sum.broadcast_div(&denom)?
+                }
+            };
 
             let norms = pooled
                 .sqr()?
