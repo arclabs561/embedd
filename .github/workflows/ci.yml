@@ -50,7 +50,9 @@ jobs:
           - "--features serde"
           - "--features qdrant"
           - "--features openai,cli"
-          - "--all-features"
+          # `all` excludes the macOS/NVIDIA-only metal/cuda features, which cannot
+          # build on the Linux runner; they are verified locally.
+          - "--features all"
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
