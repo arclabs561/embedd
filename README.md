@@ -11,7 +11,7 @@ traits and wrappers only.
 
 ```toml
 [dependencies]
-embedd = { version = "0.2", features = ["fastembed"] }
+embedd = { version = "0.4", features = ["fastembed"] }
 ```
 
 ## Quick start
