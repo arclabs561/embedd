@@ -1,9 +1,7 @@
 //! Compose embedding policies without downloading a model.
 //!
-//! This example uses a tiny deterministic embedder so the behavior is visible:
-//! scoping prefixes make query/document vectors differ, output truncation sets
-//! the dimension, normalization makes cosine equal dot product, batching limits
-//! call size, and caching avoids repeat work.
+//! Uses a deterministic toy embedder with prompt scoping, output-dimension
+//! truncation, L2 normalization, batching, and caching.
 //!
 //! Run:
 //!

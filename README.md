@@ -100,7 +100,8 @@ cargo run -p embedd --example hello_embed --features fastembed
 ```
 
 Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`),
-`backend_matrix`, `backend_compare`, and `rerank_ort` (`ort-tokenizers`).
+`backend_matrix`, `backend_compare`, `span_pool_offsets` (`candle-hf`), and
+`rerank_ort` (`ort-tokenizers`).
 
 ## Related
 

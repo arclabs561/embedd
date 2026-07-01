@@ -1,8 +1,9 @@
 # embedd
 
-Embedding interfaces and local backends. A shared `TextEmbedder` trait
-across local (fastembed, candle) and remote (OpenAI, TEI, HF Inference)
-providers.
+Embedding interfaces and local backends. One `TextEmbedder` trait shared
+across local (fastembed, candle) and remote (OpenAI-compatible, TEI, HF
+Inference) providers. Backends are feature-gated; the default build is traits
+and wrappers only.
 
 ```toml
 [dependencies]
@@ -61,13 +62,14 @@ let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 
 ### Sync (ureq)
 
-| Feature        | Backend                                    | Notes                       |
-|----------------|--------------------------------------------|-----------------------------|
-| `fastembed`    | fastembed dense + sparse (ONNX)            | downloads models on first use |
-| `candle-hf`    | Local BERT/JinaBERT/DistilBERT/ModernBERT  | CPU inference, no download  |
-| `openai`       | OpenAI-compatible API                      | API key + network           |
-| `tei`          | TEI server                                 | running TEI instance        |
-| `hf-inference` | HF Inference API                           | HF token + network          |
+| Feature | Backend | Notes |
+|---|---|---|
+| `fastembed` | fastembed dense, sparse, and reranker backends (ONNX) | downloads models on first use |
+| `candle-hf` | `LocalHfEmbedder` (BERT, JinaBERT, DistilBERT, XLM-RoBERTa, ModernBERT), `StellaEmbedder` | local weights or HF Hub |
+| `ort-tokenizers` | `OrtReranker` cross-encoder via ONNX Runtime | local `model.onnx` + `tokenizer.json` |
+| `openai` | OpenAI-compatible API | API key + network |
+| `tei` | TEI server | running TEI instance |
+| `hf-inference` | HF Inference API | HF token + network |
 
 ### Async (reqwest)
 
@@ -91,7 +93,8 @@ vectors plus byte offsets into the original input text. This is backend-specific
 because remote embedding services do not all expose tokenizer offsets.
 
 Wrappers: `PromptedTextEmbedder` (instruction prefix), `L2NormalizedTextEmbedder`,
-`TruncateDimTextEmbedder` (matryoshka truncation), `BatchingTextEmbedder` (batch size control).
+`TruncateDimTextEmbedder` (matryoshka truncation), `BatchingTextEmbedder` (batch
+size control), `CachingTextEmbedder`, and `BatchingReranker`.
 
 Run the no-network policy example to see these wrappers compose:
 
@@ -121,11 +124,6 @@ The `candle-hf` backend auto-detects model architecture from `config.json`:
 | `distilbert`   | DistilBERT   | no token_type_ids                          |
 | `xlm-roberta`  | XLM-RoBERTa  | multilingual                               |
 | `modernbert`   | ModernBERT   | RoPE, sliding window attention             |
-
-## Planned
-
-- Burn backend (stub exists, implementation pending)
-- SigLIP image backend (stub exists)
 
 ## Related
 

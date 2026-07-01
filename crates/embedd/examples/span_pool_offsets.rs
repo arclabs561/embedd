@@ -16,7 +16,9 @@ fn main() -> anyhow::Result<()> {
         && std::env::var("IKSH_EMBED_MODEL_DIR").is_err()
         && std::env::var("IKSH_EMBED_MODEL").is_err()
     {
-        println!("set EMBEDD_MODEL_DIR or EMBEDD_MODEL to run this example");
+        println!(
+            "set EMBEDD_MODEL_DIR=/path/to/model or EMBEDD_MODEL=<hf-model-id> to run this example"
+        );
         return Ok(());
     }
 
