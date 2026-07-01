@@ -85,6 +85,11 @@ let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 - **`ImageEmbedder`** -- `embed_images(&[Vec<u8>]) -> Vec<Vec<f32>>`.
 - **`TokenEmbedder`** -- multi-vector (late interaction) embeddings.
 
+For span pooling, `LocalHfEmbedder` also exposes
+`embed_tokens_with_offsets` under the `candle-hf` feature. It returns token
+vectors plus byte offsets into the original input text. This is backend-specific
+because remote embedding services do not all expose tokenizer offsets.
+
 Wrappers: `PromptedTextEmbedder` (instruction prefix), `L2NormalizedTextEmbedder`,
 `TruncateDimTextEmbedder` (matryoshka truncation), `BatchingTextEmbedder` (batch size control).
 

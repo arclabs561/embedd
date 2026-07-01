@@ -49,6 +49,7 @@ proptest.workspace = true
 criterion.workspace = true
 assert_cmd = "2.0"
 predicates = "3.0"
+slabs = "0.3"
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [[bench]]
@@ -61,6 +62,10 @@ required-features = ["ort-tokenizers"]
 
 [[example]]
 name = "metal_bench"
+required-features = ["candle-hf"]
+
+[[example]]
+name = "span_pool_offsets"
 required-features = ["candle-hf"]
 
 [features]

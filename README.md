@@ -53,6 +53,11 @@ constructor and the feature flag; nothing else changes.
 - `ImageEmbedder` / `AudioEmbedder`: bytes to vectors.
 - `Reranker` / `AsyncReranker`: cross-encoder relevance scoring.
 
+For span pooling, `LocalHfEmbedder` also exposes
+`embed_tokens_with_offsets` under the `candle-hf` feature. It returns token
+vectors plus byte offsets into the original input text. This is backend-specific
+because remote embedding services do not all expose tokenizer offsets.
+
 Wrappers compose over any implementation: `PromptedTextEmbedder` (instruction
 prefix), `L2NormalizedTextEmbedder`, `TruncateDimTextEmbedder` (matryoshka
 truncation), `BatchingTextEmbedder`, `CachingTextEmbedder`, `BatchingReranker`.

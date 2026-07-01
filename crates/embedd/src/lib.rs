@@ -2351,6 +2351,54 @@ mod candle_hf {
         max_len: usize,
     }
 
+    /// Token-level embeddings paired with byte offsets into the original input
+    /// text.
+    ///
+    /// These offsets are relative to the text passed to
+    /// [`LocalHfEmbedder::embed_tokens_with_offsets`], not to the prompt-prefixed
+    /// string that the local backend sends to the tokenizer. Tokens introduced
+    /// by prompt prefixes or tokenizer special tokens are retained for sequence
+    /// alignment, but receive the empty offset `(0, 0)` so span-pooling callers
+    /// can ignore them by ordinary half-open overlap checks.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct TokenEmbeddingsWithByteOffsets {
+        token_embeddings: Vec<Vec<f32>>,
+        byte_offsets: Vec<(usize, usize)>,
+    }
+
+    impl TokenEmbeddingsWithByteOffsets {
+        fn new(token_embeddings: Vec<Vec<f32>>, byte_offsets: Vec<(usize, usize)>) -> Self {
+            debug_assert_eq!(token_embeddings.len(), byte_offsets.len());
+            Self {
+                token_embeddings,
+                byte_offsets,
+            }
+        }
+
+        /// Token-level embeddings, one vector per non-padding token.
+        pub fn token_embeddings(&self) -> &[Vec<f32>] {
+            &self.token_embeddings
+        }
+
+        /// Byte offsets into the original input text, aligned with
+        /// [`token_embeddings`](Self::token_embeddings).
+        pub fn byte_offsets(&self) -> &[(usize, usize)] {
+            &self.byte_offsets
+        }
+
+        /// Consume this value and return `(token_embeddings, byte_offsets)`.
+        pub fn into_parts(self) -> (Vec<Vec<f32>>, Vec<(usize, usize)>) {
+            (self.token_embeddings, self.byte_offsets)
+        }
+    }
+
+    struct ForwardWithOffsets {
+        hidden_states: Tensor,
+        attention_mask: Tensor,
+        real_lens: Vec<usize>,
+        byte_offsets: Vec<Vec<(usize, usize)>>,
+    }
+
     impl LocalHfEmbedder {
         /// Load from a local directory containing `config.json`, `tokenizer.json`,
         /// `model.safetensors`.
@@ -2503,9 +2551,21 @@ mod candle_hf {
             texts: &[String],
             is_query: bool,
         ) -> Result<(Tensor, Tensor, Vec<usize>)> {
+            let out = self.forward_inner_with_offsets(texts, is_query)?;
+            Ok((out.hidden_states, out.attention_mask, out.real_lens))
+        }
+
+        /// Like [`forward_inner`](Self::forward_inner), but also returns
+        /// text-relative byte offsets for each non-padding token.
+        fn forward_inner_with_offsets(
+            &self,
+            texts: &[String],
+            is_query: bool,
+        ) -> Result<ForwardWithOffsets> {
             let mut toks = Vec::with_capacity(texts.len());
             let mut masks = Vec::with_capacity(texts.len());
             let mut real_lens = Vec::with_capacity(texts.len());
+            let mut byte_offsets = Vec::with_capacity(texts.len());
             let mut max_seq = 0usize;
 
             for t in texts {
@@ -2524,10 +2584,18 @@ mod candle_hf {
                 let len = ids.len().min(self.max_len);
                 let ids: Vec<u32> = ids[..len].to_vec();
                 let mask: Vec<u32> = mask[..len].to_vec();
+                let offsets = text_relative_byte_offsets(
+                    enc.get_offsets(),
+                    enc.get_special_tokens_mask(),
+                    prefix.len(),
+                    t.len(),
+                    len,
+                );
                 real_lens.push(len);
                 max_seq = max_seq.max(ids.len());
                 toks.push(ids);
                 masks.push(mask);
+                byte_offsets.push(offsets);
             }
 
             let pad_id = self.tokenizer.token_to_id("[PAD]").unwrap_or(0);
@@ -2555,7 +2623,12 @@ mod candle_hf {
             let ys = self
                 .model
                 .forward(&input_ids, &token_type_ids, &attention_mask)?;
-            Ok((ys, attention_mask, real_lens))
+            Ok(ForwardWithOffsets {
+                hidden_states: ys,
+                attention_mask,
+                real_lens,
+                byte_offsets,
+            })
         }
 
         fn embed_texts_inner(&self, texts: &[String], is_query: bool) -> Result<Vec<Vec<f32>>> {
@@ -2603,6 +2676,59 @@ mod candle_hf {
                 .map(|(token_vecs, real_len)| token_vecs[..real_len].to_vec())
                 .collect())
         }
+
+        /// Embed tokens and return byte offsets aligned with the original input
+        /// text.
+        ///
+        /// This is intentionally an inherent method on the local Candle/HF
+        /// backend rather than part of [`super::TokenEmbedder`]. The tokenizer
+        /// that produces trustworthy offsets lives here; remote embedding
+        /// services do not all expose an equivalent contract.
+        pub fn embed_tokens_with_offsets(
+            &self,
+            texts: &[String],
+            mode: EmbedMode,
+        ) -> Result<Vec<TokenEmbeddingsWithByteOffsets>> {
+            let out = self.forward_inner_with_offsets(texts, matches!(mode, EmbedMode::Query))?;
+            let ys = out.hidden_states.to_dtype(DType::F32)?;
+
+            let all: Vec<Vec<Vec<f32>>> = ys.to_vec3()?;
+            Ok(all
+                .into_iter()
+                .zip(out.real_lens)
+                .zip(out.byte_offsets)
+                .map(|((token_vecs, real_len), offsets)| {
+                    TokenEmbeddingsWithByteOffsets::new(token_vecs[..real_len].to_vec(), offsets)
+                })
+                .collect())
+        }
+    }
+
+    fn text_relative_byte_offsets(
+        offsets: &[(usize, usize)],
+        special_tokens_mask: &[u32],
+        prefix_len: usize,
+        text_len: usize,
+        len: usize,
+    ) -> Vec<(usize, usize)> {
+        offsets
+            .iter()
+            .zip(special_tokens_mask.iter())
+            .take(len)
+            .map(|(&(start, end), &is_special)| {
+                if is_special != 0 || end <= prefix_len {
+                    return (0, 0);
+                }
+
+                let start = start.saturating_sub(prefix_len).min(text_len);
+                let end = end.saturating_sub(prefix_len).min(text_len);
+                if end <= start {
+                    (0, 0)
+                } else {
+                    (start, end)
+                }
+            })
+            .collect()
     }
 
     impl TextEmbedder for LocalHfEmbedder {
@@ -2864,10 +2990,55 @@ mod candle_hf {
             }
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::text_relative_byte_offsets;
+
+        #[test]
+        fn text_relative_offsets_remove_prompt_and_special_tokens() {
+            let offsets = vec![
+                (0, 0),   // [CLS]
+                (0, 4),   // prefix-only token
+                (4, 8),   // prefix-only token ending exactly at text start
+                (8, 13),  // "hello"
+                (13, 17), // " you"
+                (0, 0),   // [SEP]
+            ];
+            let special = vec![1, 0, 0, 0, 0, 1];
+
+            let adjusted = text_relative_byte_offsets(&offsets, &special, 8, 9, offsets.len());
+
+            assert_eq!(
+                adjusted,
+                vec![(0, 0), (0, 0), (0, 0), (0, 5), (5, 9), (0, 0)]
+            );
+        }
+
+        #[test]
+        fn text_relative_offsets_keep_alignment_after_truncation() {
+            let offsets = vec![(0, 0), (8, 13), (13, 17), (17, 23)];
+            let special = vec![1, 0, 0, 0];
+
+            let adjusted = text_relative_byte_offsets(&offsets, &special, 8, 15, 3);
+
+            assert_eq!(adjusted, vec![(0, 0), (0, 5), (5, 9)]);
+        }
+
+        #[test]
+        fn text_relative_offsets_clamp_to_input_text() {
+            let offsets = vec![(8, 20), (30, 40)];
+            let special = vec![0, 0];
+
+            let adjusted = text_relative_byte_offsets(&offsets, &special, 8, 5, offsets.len());
+
+            assert_eq!(adjusted, vec![(0, 5), (0, 0)]);
+        }
+    }
 }
 
 #[cfg(feature = "candle-hf")]
-pub use candle_hf::{LocalHfEmbedder, ModelArch, StellaEmbedder};
+pub use candle_hf::{LocalHfEmbedder, ModelArch, StellaEmbedder, TokenEmbeddingsWithByteOffsets};
 
 #[cfg(feature = "fastembed")]
 pub use fastembed::FastembedReranker;
