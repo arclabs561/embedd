@@ -106,8 +106,6 @@ Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`),
 ## Related
 
 - [innr](https://crates.io/crates/innr): SIMD vector ops backing the `vector` module
-- [vicinity](https://crates.io/crates/vicinity): approximate nearest neighbor search
-- [rankops](https://crates.io/crates/rankops): score fusion and reranking on top of embeddings
 
 ## License
 
