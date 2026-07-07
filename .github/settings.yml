@@ -2,7 +2,7 @@
 # https://github.com/repository-settings/app
 
 repository:
-  description: "Embedding interfaces and local backends"
+  description: "Embedding interfaces and backends"
   homepage: "https://docs.rs/embedd"
   private: false
   has_issues: true

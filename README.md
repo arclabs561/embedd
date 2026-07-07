@@ -2,12 +2,11 @@
 
 [![crates.io](https://img.shields.io/crates/v/embedd.svg)](https://crates.io/crates/embedd)
 [![Documentation](https://docs.rs/embedd/badge.svg)](https://docs.rs/embedd)
-[![CI](https://github.com/arclabs561/embedd/actions/workflows/ci.yml/badge.svg)](https://github.com/arclabs561/embedd/actions/workflows/ci.yml)
 
-Embedding interfaces and local backends. One `TextEmbedder` trait shared
-across local (fastembed, candle) and remote (OpenAI-compatible, TEI, HF
-Inference) providers. Backends are feature-gated; the default build is
-traits and wrappers only.
+Embedding interfaces and backends.
+
+One `TextEmbedder` trait covers local and remote providers. Backends are
+feature-gated; the default build is traits and wrappers only.
 
 ```toml
 [dependencies]
