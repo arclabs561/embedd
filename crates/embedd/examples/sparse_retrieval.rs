@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
             "  #{}: {:.4}  {} ({} terms)",
             i + 1,
             score,
-            &docs[*idx],
+            docs[*idx],
             doc_vecs[*idx].len(),
         );
     }
