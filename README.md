@@ -37,8 +37,8 @@ let embedder = OpenAiEmbedder::new("sk-...", "text-embedding-3-small");
 let vec = embedder.embed_text("hello world", EmbedMode::Query)?;
 ```
 
-All trait methods return `anyhow::Result`. Swapping backends changes the
-constructor and the feature flag; nothing else changes.
+Embedding and scoring methods return `anyhow::Result`. Swapping backends uses
+the same trait interface, with a backend-specific constructor and feature flag.
 
 ## Traits
 
