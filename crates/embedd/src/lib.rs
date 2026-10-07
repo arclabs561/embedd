@@ -2116,44 +2116,8 @@ pub mod safetensors {
     }
 }
 
-/// Vector post-processing helpers (backed by `innr` SIMD primitives).
-pub mod vector {
-    use innr::{cosine, dot, norm};
-
-    /// Threshold below which a vector is considered near-zero.
-    const NORM_EPSILON: f32 = 1e-9;
-
-    /// Compute the L2 norm of a vector.
-    pub fn l2_norm(v: &[f32]) -> f32 {
-        norm(v)
-    }
-
-    /// In-place L2 normalization.
-    ///
-    /// Returns the original norm. If the vector is near-zero (< `NORM_EPSILON`),
-    /// this is a no-op and returns 0.0.
-    pub fn l2_normalize_in_place(v: &mut [f32]) -> f32 {
-        let n = norm(v);
-        if n <= NORM_EPSILON {
-            return 0.0;
-        }
-        let inv = 1.0 / n;
-        for x in v.iter_mut() {
-            *x *= inv;
-        }
-        n
-    }
-
-    /// Dot product.
-    pub fn dot_f32(a: &[f32], b: &[f32]) -> f32 {
-        dot(a, b)
-    }
-
-    /// Cosine similarity (handles zero vectors).
-    pub fn cosine_f32(a: &[f32], b: &[f32]) -> f32 {
-        cosine(a, b)
-    }
-}
+/// Vector post-processing helpers; enable `simd` for optional innr acceleration.
+pub mod vector;
 
 #[cfg(feature = "candle-hf")]
 mod candle_hf {

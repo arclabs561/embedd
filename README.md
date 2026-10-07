@@ -104,7 +104,16 @@ Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`),
 
 ## Related
 
-- [innr](https://crates.io/crates/innr): SIMD vector ops backing the `vector` module
+- [innr](https://crates.io/crates/innr): optional SIMD acceleration for the `vector` module
+
+## Vector acceleration
+
+Vector helpers and normalization use safe scalar Rust by default. Enable `simd`
+for innr acceleration (`embedd = { version = "0.4.1", features = ["simd"] }`),
+which requires Rust 1.89. The helper APIs stay available without this feature.
+The `all` convenience feature includes `simd`. Floating-point results can differ
+because reduction order changes. Scalar defaults may be slower for large vectors. Dependencies elsewhere in an application can enable `simd` through
+Cargo feature unification.
 
 ## License
 
