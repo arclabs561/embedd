@@ -45,6 +45,7 @@ jobs:
       matrix:
         features:
           - "--no-default-features"
+          - "--features simd"
           - "--features candle-hf"
           - "--features fastembed"
           - "--features openai"
@@ -86,6 +87,21 @@ jobs:
       - name: Test (workspace, default features)
         run: cargo test --workspace
 
+      - name: Test vector backends (SIMD)
+        run: cargo test -p embedd --features simd --test vector_backend --test normalization_policy
+
+      - name: Default external consumer excludes innr
+        shell: bash
+        run: |
+          probe=$(mktemp -d)
+          cargo init --lib --name embedd_consumer "$probe"
+          printf '\nembedd = { path = "%s/crates/embedd" }\n' "$GITHUB_WORKSPACE" >> "$probe/Cargo.toml"
+          cargo tree --manifest-path "$probe/Cargo.toml" --edges normal,build --prefix none > "$probe/tree.txt"
+          if grep -q '^innr v' "$probe/tree.txt"; then
+            cat "$probe/tree.txt"
+            exit 1
+          fi
+
       - name: Test (embedd, fastembed)
         run: cargo test -p embedd --features fastembed
 
@@ -95,5 +111,37 @@ jobs:
       - name: Semver check
         if: github.event_name == 'pull_request'
         run: |
-          cargo install cargo-semver-checks --locked || true
-          cargo semver-checks -p embedd
+          cargo install cargo-semver-checks --version 0.51.0 --locked
+          cargo semver-checks -p embedd --baseline-version 0.4.0 --default-features --features all
+
+  vector-consumer-msrv:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        backend:
+          - {toolchain: "1.80.0", feature: ""}
+          - {toolchain: "1.89.0", feature: "simd"}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ matrix.backend.toolchain }}
+      - name: Check external consumer at the backend's Rust floor
+        shell: bash
+        env:
+          TOOLCHAIN: ${{ matrix.backend.toolchain }}
+          BACKEND_FEATURE: ${{ matrix.backend.feature }}
+        run: |
+          probe=$(mktemp -d)
+          mkdir "$probe/src"
+          printf '[package]\nname="embedd_msrv_consumer"\nversion="0.0.0"\nedition="2021"\n[dependencies]\nembedd={path="%s/crates/embedd",features=[%s]}\n' \
+            "$GITHUB_WORKSPACE" "${BACKEND_FEATURE:+\"$BACKEND_FEATURE\"}" > "$probe/Cargo.toml"
+          printf 'fn main() { assert_eq!(embedd::vector::dot_f32(&[1.0], &[2.0]), 2.0); }\n' > "$probe/src/main.rs"
+          RUSTC="$(rustup which --toolchain "$TOOLCHAIN" rustc)"
+          RUSTDOC="$(rustup which --toolchain "$TOOLCHAIN" rustdoc)"
+          export RUSTC RUSTDOC
+          "$RUSTC" --version
+          "$(rustup which --toolchain "$TOOLCHAIN" cargo)" run --manifest-path "$probe/Cargo.toml"

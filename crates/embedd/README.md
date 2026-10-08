@@ -131,6 +131,15 @@ The `candle-hf` backend auto-detects model architecture from `config.json`:
 - [vicinity](https://crates.io/crates/vicinity) -- approximate nearest neighbor search
 - [rankops](https://crates.io/crates/rankops) -- score fusion, reranking (MaxSim, MMR, DPP)
 
+## Vector acceleration
+
+Vector helpers and normalization use safe scalar Rust by default. Enable `simd`
+for innr acceleration (`embedd = { version = "0.4.1", features = ["simd"] }`),
+which requires Rust 1.89. The helper APIs stay available without this feature.
+The `all` convenience feature includes `simd`. Floating-point results can differ
+because reduction order changes. Scalar defaults may be slower for large vectors. Dependencies elsewhere in an application can enable `simd` through
+Cargo feature unification.
+
 ## License
 
 MIT OR Apache-2.0

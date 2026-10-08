@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Vector helpers use safe scalar reductions by default, retaining their APIs, length checks and near-zero normalization behavior. Opt into innr acceleration with `simd` (Rust 1.89); `all` includes it. Floating-point rounding and throughput can differ between backends.
+
 ## [0.4.0] - 2026-06-27
 
 ### Fixed
