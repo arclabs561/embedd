@@ -8,6 +8,11 @@ Embedding interfaces and backends.
 One `TextEmbedder` trait covers local and remote providers. Backends are
 feature-gated; the default build is traits and wrappers only.
 
+For local ONNX embeddings in one process, calling
+[`fastembed`](https://crates.io/crates/fastembed) directly is simpler; use
+embedd when you need one trait across local and remote backends, or its
+wrappers for prompts, normalization, truncation, batching and caching.
+
 ```toml
 [dependencies]
 embedd = { version = "0.4", features = ["fastembed"] }

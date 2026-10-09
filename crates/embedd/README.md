@@ -5,6 +5,11 @@ across local (fastembed, candle) and remote (OpenAI-compatible, TEI, HF
 Inference) providers. Backends are feature-gated; the default build is traits
 and wrappers only.
 
+For local ONNX embeddings in one process, calling
+[`fastembed`](https://crates.io/crates/fastembed) directly is simpler; use
+embedd when you need one trait across local and remote backends, or its
+wrappers for prompts, normalization, truncation, batching and caching.
+
 ```toml
 [dependencies]
 embedd = { version = "0.4", features = ["fastembed"] }
@@ -12,7 +17,7 @@ embedd = { version = "0.4", features = ["fastembed"] }
 
 ## The trait
 
-```rust
+```rust,ignore
 pub trait TextEmbedder: Send + Sync {
     fn embed_texts(&self, texts: &[String], mode: EmbedMode) -> Result<Vec<Vec<f32>>>;
 
@@ -29,33 +34,50 @@ nothing else changes.
 
 Local ONNX inference via fastembed:
 
-```rust
+```rust,no_run
+# #[cfg(feature = "fastembed")]
+# fn main() -> anyhow::Result<()> {
 use embedd::{EmbedMode, TextEmbedder};
 use embedd::fastembed::FastembedEmbedder;
 
 let embedder = FastembedEmbedder::new_default()?;
 let vec = embedder.embed_text("hello world", EmbedMode::Document)?;
 println!("dim={}", vec.len());
+# Ok(())
+# }
+# #[cfg(not(feature = "fastembed"))]
+# fn main() {}
 ```
 
 Remote via OpenAI-compatible API:
 
-```rust
+```rust,no_run
+# #[cfg(feature = "openai")]
+# fn main() -> anyhow::Result<()> {
 use embedd::{EmbedMode, TextEmbedder};
 use embedd::openai::OpenAiEmbedder;  // sync
 
 let embedder = OpenAiEmbedder::new("sk-...", "text-embedding-3-small");
 let vec = embedder.embed_text("hello world", EmbedMode::Query)?;
+# Ok(())
+# }
+# #[cfg(not(feature = "openai"))]
+# fn main() {}
 ```
 
 Async remote:
 
-```rust
+```rust,no_run
+# #[cfg(feature = "async-openai")]
+# async fn run() -> anyhow::Result<()> {
 use embedd::{EmbedMode, AsyncTextEmbedder};
 use embedd::async_openai::AsyncOpenAiEmbedder;
 
 let embedder = AsyncOpenAiEmbedder::new("sk-...", "text-embedding-3-small");
 let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
+# Ok(())
+# }
+# fn main() {}
 ```
 
 ## Backends
@@ -104,13 +126,19 @@ cargo run -p embedd --example policy_pipeline
 
 ## Sparse embeddings
 
-```rust
+```rust,no_run
+# #[cfg(feature = "fastembed")]
+# fn main() -> anyhow::Result<()> {
 use embedd::{EmbedMode, SparseEmbedder};
 use embedd::fastembed::FastembedSparseEmbedder;
 
 let sparse = FastembedSparseEmbedder::new_default()?;
 let vecs = sparse.embed_sparse(&["hello world".into()], EmbedMode::Document)?;
 // Each vec is Vec<(term_id, weight)>
+# Ok(())
+# }
+# #[cfg(not(feature = "fastembed"))]
+# fn main() {}
 ```
 
 ## Candle architectures

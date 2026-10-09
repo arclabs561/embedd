@@ -245,11 +245,7 @@ impl crate::Reranker for FastembedReranker {
             })
             .collect();
         // fastembed returns sorted by descending score, but re-sort to be safe.
-        out.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        out.sort_by(|a, b| b.score.total_cmp(&a.score));
         if let Some(k) = top_k {
             out.truncate(k);
         }

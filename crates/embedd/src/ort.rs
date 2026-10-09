@@ -265,11 +265,7 @@ impl Reranker for OrtReranker {
             .map(|(i, score)| RerankResult { index: i, score })
             .collect();
 
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        results.sort_by(|a, b| b.score.total_cmp(&a.score));
 
         if let Some(k) = top_k {
             results.truncate(k);

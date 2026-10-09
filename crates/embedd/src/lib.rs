@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 //! `embedd`: embedding interfaces + reusable backends (multi-modality substrate).
 //!
 //! This crate is the "shared embedding substrate": consumers should depend on `embedd`
@@ -762,11 +763,7 @@ impl<R: Reranker> Reranker for BatchingReranker<R> {
             }
             all_results.extend(batch_results);
         }
-        all_results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        all_results.sort_by(|a, b| b.score.total_cmp(&a.score));
         if let Some(k) = top_k {
             all_results.truncate(k);
         }
@@ -2389,8 +2386,10 @@ mod candle_hf {
             let hdim = hidden_size(&config_json);
 
             let device = pick_device();
-            // SAFETY: safetensors header+offsets validated above. The mmap lifetime is
-            // bound to VarBuilder which owns the mapping; no aliased mutation occurs.
+            // SAFETY: the mapped file must not be modified or truncated while
+            // VarBuilder (which owns the mapping) and the tensors loaded from it
+            // are alive. Header validation above does not establish this; it holds
+            // because HF Hub cache files are written by rename, not in place.
             let vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
             };
@@ -2441,7 +2440,8 @@ mod candle_hf {
                     let hdim = hidden_size(&config_json);
 
                     let device = pick_device();
-                    // SAFETY: see from_dir -- safetensors validated, mmap owned by VarBuilder.
+                    // SAFETY: as in `from_dir`, the mapped file must not be modified or
+                    // truncated while the mapping is alive.
                     let vb = unsafe {
                         VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)?
                     };
@@ -2817,7 +2817,8 @@ mod candle_hf {
 
             let device = pick_device();
 
-            // SAFETY: safetensors validated above, mmap owned by VarBuilder.
+            // SAFETY: as in `LocalHfEmbedder::from_dir`, the mapped files must not be
+            // modified or truncated while the mappings are alive.
             let base_vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[base_weights], DType::F32, &device)?
             };
@@ -2861,7 +2862,8 @@ mod candle_hf {
 
             let device = pick_device();
 
-            // SAFETY: safetensors validated above, mmap owned by VarBuilder.
+            // SAFETY: as in `LocalHfEmbedder::from_dir`, the mapped files must not be
+            // modified or truncated while the mappings are alive.
             let base_vb = unsafe {
                 VarBuilder::from_mmaped_safetensors(&[base_weights], DType::F32, &device)?
             };
@@ -3211,11 +3213,7 @@ mod tests {
                     score: doc.len() as f32,
                 })
                 .collect();
-            results.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            results.sort_by(|a, b| b.score.total_cmp(&a.score));
             if let Some(k) = top_k {
                 results.truncate(k);
             }
@@ -3274,6 +3272,40 @@ mod tests {
             assert_eq!(u.index, b.index);
             assert!((u.score - b.score).abs() < f32::EPSILON);
         }
+    }
+
+    /// Reranker whose scores include NaN, as a broken model head can produce.
+    struct NanReranker;
+
+    impl Reranker for NanReranker {
+        fn rerank(
+            &self,
+            _query: &str,
+            documents: &[String],
+            _top_k: Option<usize>,
+        ) -> anyhow::Result<Vec<RerankResult>> {
+            Ok((0..documents.len())
+                .map(|i| RerankResult {
+                    index: i,
+                    score: if i % 3 == 0 { f32::NAN } else { i as f32 },
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn batching_reranker_with_nan_scores_does_not_panic() {
+        let docs: Vec<String> = (0..64).map(|i| format!("doc {i}")).collect();
+        let results = BatchingReranker::new(NanReranker, 5)
+            .rerank("q", &docs, None)
+            .unwrap();
+        assert_eq!(results.len(), 64);
+        let finite: Vec<f32> = results
+            .iter()
+            .map(|r| r.score)
+            .filter(|s| !s.is_nan())
+            .collect();
+        assert!(finite.windows(2).all(|w| w[0] >= w[1]), "{finite:?}");
     }
 
     #[test]
