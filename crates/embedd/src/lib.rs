@@ -276,7 +276,12 @@ impl<E: TextEmbedder> TextEmbedder for TruncateDimTextEmbedder<E> {
 
     fn capabilities(&self) -> TextEmbedderCapabilities {
         // This wrapper doesn't claim anything about prompt/truncation tokenization behavior.
-        self.inner.capabilities()
+        // Truncating a unit vector leaves a shorter one, so normalization no longer holds.
+        let mut caps = self.inner.capabilities();
+        if caps.normalization == Normalization::L2Normalized {
+            caps.normalization = Normalization::Unknown;
+        }
+        caps
     }
 }
 
@@ -403,12 +408,17 @@ impl<E: TextEmbedder> TextEmbedder for CachingTextEmbedder<E> {
         // Embed cache misses.
         if !miss_texts.is_empty() {
             let embedded = self.inner.embed_texts(&miss_texts, mode)?;
+            if embedded.len() != miss_texts.len() {
+                return Err(anyhow::anyhow!(
+                    "inner embedder returned {} vectors for {} texts",
+                    embedded.len(),
+                    miss_texts.len()
+                ));
+            }
             let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-            for (j, idx) in miss_indices.iter().enumerate() {
-                if let Some(vec) = embedded.get(j) {
-                    cache.insert((texts[*idx].clone(), mode_key), vec.clone());
-                    results[*idx] = Some(vec.clone());
-                }
+            for (idx, vec) in miss_indices.iter().zip(embedded) {
+                cache.insert((texts[*idx].clone(), mode_key), vec.clone());
+                results[*idx] = Some(vec);
             }
         }
 

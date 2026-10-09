@@ -73,3 +73,37 @@ fn output_dim_then_require_l2_yields_unit_norm_vectors() {
     // Wrapper policy should report L2Normalized after RequireL2.
     assert_eq!(e.capabilities().normalization, Normalization::L2Normalized);
 }
+
+#[derive(Debug, Clone)]
+struct UnitNormDummy;
+
+impl TextEmbedder for UnitNormDummy {
+    fn embed_texts(&self, texts: &[String], _mode: EmbedMode) -> anyhow::Result<Vec<Vec<f32>>> {
+        // Unit vector with equal components: its first half has norm 1/sqrt(2).
+        Ok(texts.iter().map(|_| vec![0.5f32; 4]).collect())
+    }
+
+    fn capabilities(&self) -> embedd::TextEmbedderCapabilities {
+        embedd::TextEmbedderCapabilities {
+            uses_embed_mode: embedd::PromptApplication::None,
+            normalization: Normalization::L2Normalized,
+            truncation: embedd::TruncationPolicy::Unknown,
+        }
+    }
+}
+
+#[test]
+fn truncating_an_l2_normalized_model_then_require_l2_yields_unit_norm() {
+    let e = apply_output_dim(UnitNormDummy, Some(2)).unwrap();
+    let e = apply_normalization_policy(e, NormalizationPolicy::RequireL2).unwrap();
+    let out = e.embed_texts(&["a".to_string()], EmbedMode::Query).unwrap();
+    assert_eq!(out[0].len(), 2);
+    let n = l2_norm(&out[0]);
+    assert!((n - 1.0).abs() < 1e-4, "expected ~1.0, got {n}");
+}
+
+#[test]
+fn truncation_does_not_claim_l2_normalized_output() {
+    let e = apply_output_dim(UnitNormDummy, Some(2)).unwrap();
+    assert_ne!(e.capabilities().normalization, Normalization::L2Normalized);
+}
