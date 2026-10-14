@@ -1212,6 +1212,12 @@ pub mod openai {
 
             let body = resp.into_string()?;
             let parsed: EmbeddingsResponse = serde_json::from_str(&body)?;
+            anyhow::ensure!(
+                parsed.data.len() == texts.len(),
+                "openai embeddings count mismatch: expected {}, got {}",
+                texts.len(),
+                parsed.data.len()
+            );
             Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
         }
 
@@ -1557,6 +1563,12 @@ pub mod async_openai {
                     ));
                 }
                 let parsed: EmbeddingsResponse = resp.json().await?;
+                anyhow::ensure!(
+                    parsed.data.len() == texts.len(),
+                    "openai embeddings count mismatch: expected {}, got {}",
+                    texts.len(),
+                    parsed.data.len()
+                );
                 Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
             })
         }
