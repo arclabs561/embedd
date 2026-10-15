@@ -1,5 +1,12 @@
 # Changelog
 
+## Source history (unversioned)
+
+These entries identify source changes without assigning a package release.
+
+- Reject OpenAI embedding responses whose item count differs from the request, in both synchronous and asynchronous adapters.
+  ([910cec2](https://github.com/arclabs561/embedd/commit/910cec221f30d393b8a5dd219a2b735adc2d5235))
+
 ## [Unreleased]
 
 ### Fixed
