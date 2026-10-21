@@ -49,7 +49,7 @@ proptest.workspace = true
 criterion.workspace = true
 assert_cmd = "2.0"
 predicates = "3.0"
-slabs = "0.3"
+slabs = "0.4"
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [[bench]]
