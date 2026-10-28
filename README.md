@@ -32,13 +32,15 @@ let b = embedder.embed_text("a dog lay on the rug", EmbedMode::Document)?;
 println!("cosine similarity: {:.4}", embedd::vector::cosine_f32(&a, &b));
 ```
 
-Same trait, remote backend:
+For the remote backend, enable `openai` in the dependency above (instead of
+`fastembed`, or alongside it). This example requires an API key and network
+access:
 
 ```rust
 use embedd::openai::OpenAiEmbedder;
 use embedd::{EmbedMode, TextEmbedder};
 
-let embedder = OpenAiEmbedder::new("sk-...", "text-embedding-3-small");
+let embedder = OpenAiEmbedder::new(std::env::var("OPENAI_API_KEY")?, "text-embedding-3-small");
 let vec = embedder.embed_text("hello world", EmbedMode::Query)?;
 ```
 

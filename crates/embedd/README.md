@@ -49,7 +49,8 @@ println!("dim={}", vec.len());
 # fn main() {}
 ```
 
-Remote via OpenAI-compatible API:
+Remote via OpenAI-compatible API (enable `openai` in the dependency above
+and set `OPENAI_API_KEY`):
 
 ```rust,no_run
 # #[cfg(feature = "openai")]
@@ -57,7 +58,7 @@ Remote via OpenAI-compatible API:
 use embedd::{EmbedMode, TextEmbedder};
 use embedd::openai::OpenAiEmbedder;  // sync
 
-let embedder = OpenAiEmbedder::new("sk-...", "text-embedding-3-small");
+let embedder = OpenAiEmbedder::new(std::env::var("OPENAI_API_KEY")?, "text-embedding-3-small");
 let vec = embedder.embed_text("hello world", EmbedMode::Query)?;
 # Ok(())
 # }
@@ -65,7 +66,7 @@ let vec = embedder.embed_text("hello world", EmbedMode::Query)?;
 # fn main() {}
 ```
 
-Async remote:
+Async remote (enable `async-openai` and set `OPENAI_API_KEY`):
 
 ```rust,no_run
 # #[cfg(feature = "async-openai")]
@@ -73,7 +74,7 @@ Async remote:
 use embedd::{EmbedMode, AsyncTextEmbedder};
 use embedd::async_openai::AsyncOpenAiEmbedder;
 
-let embedder = AsyncOpenAiEmbedder::new("sk-...", "text-embedding-3-small");
+let embedder = AsyncOpenAiEmbedder::new(std::env::var("OPENAI_API_KEY")?, "text-embedding-3-small");
 let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 # Ok(())
 # }
