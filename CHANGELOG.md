@@ -9,6 +9,8 @@ These entries identify source changes without assigning a package release.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30
+
 ### Fixed
 
 - Reranker result sorts use `total_cmp`, so NaN scores no longer risk a sort
