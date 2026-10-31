@@ -87,8 +87,12 @@ impl Weights {
 }
 
 fn model_dir(tag: &str, config: serde_json::Value, weights: &Weights) -> PathBuf {
+    // Tests run on parallel threads in one process, so each call needs its
+    // own directory: a shared one is removed while another test reads it.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "embedd-attention-mask-{tag}-{}",
+        "embedd-attention-mask-{tag}-{}-{n}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
