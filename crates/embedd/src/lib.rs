@@ -2223,14 +2223,58 @@ mod candle_hf {
                 CandleModel::Bert(m) => {
                     Ok(m.forward(input_ids, token_type_ids, Some(attention_mask))?)
                 }
-                CandleModel::JinaBert(m) => Ok(m.forward(input_ids)?),
-                CandleModel::DistilBert(m) => Ok(m.forward(input_ids, attention_mask)?),
+                CandleModel::JinaBert(m) => {
+                    jina_bert_forward_unpadded(m, input_ids, attention_mask)
+                }
+                CandleModel::DistilBert(m) => {
+                    // candle's DistilBERT fills scores with -inf where the mask
+                    // is non-zero, so it takes a drop-mask shaped to broadcast
+                    // over [bsz, heads, q, k]; the HF mask marks tokens to keep.
+                    let (bsz, seq) = attention_mask.dims2()?;
+                    let drop_mask = attention_mask.eq(0i64)?.reshape((bsz, 1, 1, seq))?;
+                    Ok(m.forward(input_ids, &drop_mask)?)
+                }
                 CandleModel::XlmRoberta(m) => {
                     Ok(m.forward(input_ids, attention_mask, token_type_ids, None, None, None)?)
                 }
                 CandleModel::ModernBert(m) => Ok(m.forward(input_ids, attention_mask)?),
             }
         }
+    }
+
+    /// Run JinaBERT one sequence at a time over its unmasked tokens only.
+    ///
+    /// candle's JinaBERT forward takes no attention mask, so in a padded batch
+    /// real tokens would attend to padding and a text's embedding would depend
+    /// on its batch-mates. Masked positions of the `[bsz, seq, hidden]` result
+    /// are zero; pooling ignores them through the attention mask.
+    fn jina_bert_forward_unpadded(
+        model: &JinaBertModel,
+        input_ids: &Tensor,
+        attention_mask: &Tensor,
+    ) -> Result<Tensor> {
+        let (bsz, seq) = input_ids.dims2()?;
+        let mask_rows = attention_mask.to_vec2::<i64>()?;
+        let mut rows = Vec::with_capacity(bsz);
+        for (i, mask_row) in mask_rows.iter().enumerate() {
+            let mut keep: Vec<u32> = (0..seq as u32)
+                .filter(|&j| mask_row[j as usize] != 0)
+                .collect();
+            if keep.is_empty() {
+                // A fully masked row has nothing to restrict attention to.
+                keep = (0..seq as u32).collect();
+            }
+            let kept = keep.len();
+            let keep = Tensor::from_vec(keep, kept, input_ids.device())?;
+            let out = model
+                .forward(&input_ids.get(i)?.index_select(&keep, 0)?.unsqueeze(0)?)?
+                .squeeze(0)?;
+            let hidden = out.dim(1)?;
+            let row = Tensor::zeros((seq, hidden), out.dtype(), out.device())?
+                .index_add(&keep, &out, 0)?;
+            rows.push(row);
+        }
+        Ok(Tensor::stack(&rows, 0)?)
     }
 
     /// Detect architecture from the raw config.json.
