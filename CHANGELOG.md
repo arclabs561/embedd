@@ -13,6 +13,14 @@ These entries identify source changes without assigning a package release.
 
 - Reranker result sorts use `total_cmp`, so NaN scores no longer risk a sort
   panic.
+- Candle backend, DistilBERT: pass candle the drop-mask it expects, shaped to
+  broadcast over attention scores. embedd passed the Hugging Face keep-mask, so
+  every real token was masked out and each embedding was NaN, and batches of
+  more than one text failed with a broadcast error.
+- Candle backend, JinaBERT: run each text over its unpadded tokens. candle's
+  JinaBERT forward takes no attention mask, so real tokens attended to padding
+  and an embedding changed with the other texts in its batch. JinaBERT batches
+  now run one forward pass per text.
 
 ### Changed
 

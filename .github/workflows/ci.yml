@@ -92,6 +92,9 @@ jobs:
       - name: Test OpenAI response counts (loopback)
         run: cargo test -p embedd --features openai,async-openai --test openai_response_count
 
+      - name: Test Candle attention masks (tiny generated models)
+        run: cargo test -p embedd --features candle-hf --test candle_attention_mask
+
       - name: Test vector backends (SIMD)
         run: cargo test -p embedd --features simd --test vector_backend --test normalization_policy
 
