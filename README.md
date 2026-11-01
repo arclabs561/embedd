@@ -8,11 +8,6 @@ Embedding interfaces and backends.
 One `TextEmbedder` trait covers local and remote providers. Backends are
 feature-gated; the default build is traits and wrappers only.
 
-For local ONNX embeddings in one process, calling
-[`fastembed`](https://crates.io/crates/fastembed) directly is simpler; use
-embedd when you need one trait across local and remote backends, or its
-wrappers for prompts, normalization, truncation, batching and caching.
-
 ```toml
 [dependencies]
 embedd = { version = "0.4", features = ["fastembed"] }
@@ -105,21 +100,17 @@ cargo run -p embedd --example policy_pipeline
 cargo run -p embedd --example hello_embed --features fastembed
 ```
 
-Also `semantic_search`, `sparse_retrieval`, `batched_embed` (all `fastembed`),
-`backend_matrix`, `backend_compare`, `span_pool_offsets` (`candle-hf`), and
-`rerank_ort` (`ort-tokenizers`).
-
-## Related
-
-- [innr](https://crates.io/crates/innr): optional SIMD acceleration for the `vector` module
+Also `semantic_search`, `sparse_retrieval`, and `batched_embed` (all
+`fastembed`), `span_pool_offsets` (`candle-hf`), `rerank_ort`
+(`ort-tokenizers`), and `backend_matrix` and `backend_compare` (whichever
+backend features you enable).
 
 ## Vector acceleration
 
-Vector helpers and normalization use safe scalar Rust by default. Enable `simd`
-for innr acceleration (`embedd = { version = "0.4.1", features = ["simd"] }`),
-which requires Rust 1.89. The helper APIs stay available without this feature.
-The `all` convenience feature includes `simd`. Floating-point results can differ
-because reduction order changes. Scalar defaults may be slower for large vectors. Dependencies elsewhere in an application can enable `simd` through
+Vector helpers and normalization use safe scalar Rust by default. The `simd`
+feature (also part of `all`) uses [innr](https://crates.io/crates/innr) instead
+and requires Rust 1.89. Floating-point results can differ slightly because the
+reduction order changes, and another dependency can turn `simd` on through
 Cargo feature unification.
 
 ## License

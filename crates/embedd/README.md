@@ -1,14 +1,9 @@
 # embedd
 
-Embedding interfaces and local backends. One `TextEmbedder` trait shared
+Embedding interfaces and backends. One `TextEmbedder` trait shared
 across local (fastembed, candle) and remote (OpenAI-compatible, TEI, HF
 Inference) providers. Backends are feature-gated; the default build is traits
 and wrappers only.
-
-For local ONNX embeddings in one process, calling
-[`fastembed`](https://crates.io/crates/fastembed) directly is simpler; use
-embedd when you need one trait across local and remote backends, or its
-wrappers for prompts, normalization, truncation, batching and caching.
 
 ```toml
 [dependencies]
@@ -83,7 +78,7 @@ let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 
 ## Backends
 
-### Sync (ureq)
+### Sync
 
 | Feature | Backend | Notes |
 |---|---|---|
@@ -104,11 +99,12 @@ let vec = embedder.embed_text("hello", EmbedMode::Query).await?;
 
 ## Traits
 
-- **`TextEmbedder`** -- `embed_texts(&[String], EmbedMode) -> Vec<Vec<f32>>` + single-text convenience.
-- **`AsyncTextEmbedder`** -- async counterpart, object-safe via `BoxFuture`.
-- **`SparseEmbedder`** -- sparse lexical embeddings (`(term_id, weight)` pairs).
-- **`ImageEmbedder`** -- `embed_images(&[Vec<u8>]) -> Vec<Vec<f32>>`.
-- **`TokenEmbedder`** -- multi-vector (late interaction) embeddings.
+- `TextEmbedder`: `embed_texts(&[String], EmbedMode) -> Vec<Vec<f32>>` plus a single-text convenience.
+- `AsyncTextEmbedder`: async counterpart, object-safe via `BoxFuture`.
+- `SparseEmbedder`: sparse lexical embeddings as `(term_id, weight)` pairs.
+- `TokenEmbedder`: multi-vector (late interaction) embeddings.
+- `ImageEmbedder` / `AudioEmbedder`: bytes to vectors.
+- `Reranker` / `AsyncReranker`: cross-encoder relevance scoring.
 
 For span pooling, `LocalHfEmbedder` also exposes
 `embed_tokens_with_offsets` under the `candle-hf` feature. It returns token
@@ -154,19 +150,12 @@ The `candle-hf` backend auto-detects model architecture from `config.json`:
 | `xlm-roberta`  | XLM-RoBERTa  | multilingual                               |
 | `modernbert`   | ModernBERT   | RoPE, sliding window attention             |
 
-## Related
-
-- [innr](https://crates.io/crates/innr) -- SIMD vector ops, binary quantization, matryoshka truncation
-- [vicinity](https://crates.io/crates/vicinity) -- approximate nearest neighbor search
-- [rankops](https://crates.io/crates/rankops) -- score fusion, reranking (MaxSim, MMR, DPP)
-
 ## Vector acceleration
 
-Vector helpers and normalization use safe scalar Rust by default. Enable `simd`
-for innr acceleration (`embedd = { version = "0.4.1", features = ["simd"] }`),
-which requires Rust 1.89. The helper APIs stay available without this feature.
-The `all` convenience feature includes `simd`. Floating-point results can differ
-because reduction order changes. Scalar defaults may be slower for large vectors. Dependencies elsewhere in an application can enable `simd` through
+Vector helpers and normalization use safe scalar Rust by default. The `simd`
+feature (also part of `all`) uses [innr](https://crates.io/crates/innr) instead
+and requires Rust 1.89. Floating-point results can differ slightly because the
+reduction order changes, and another dependency can turn `simd` on through
 Cargo feature unification.
 
 ## License
