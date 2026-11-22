@@ -96,7 +96,7 @@ fn l2_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, Option<(f64, f64, f64, f
     let mut non_finite = 0usize;
     let dim = embs.first().map(|v| v.len()).unwrap_or(0);
     let mut norms = Vec::new();
-    for v in embs {
+    'vectors: for v in embs {
         if v.len() != dim {
             wrong_dim += 1;
             continue;
@@ -105,7 +105,7 @@ fn l2_stats(embs: &[Vec<f32>]) -> (usize, usize, usize, Option<(f64, f64, f64, f
         for &x in v {
             if !x.is_finite() {
                 non_finite += 1;
-                break;
+                continue 'vectors;
             }
             ss += (x as f64) * (x as f64);
         }
@@ -279,4 +279,20 @@ fn main() -> anyhow::Result<()> {
 
     println!("{}", serde_json::Value::Object(obj));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::l2_stats;
+
+    #[test]
+    fn invalid_vectors_do_not_contribute_partial_norms() {
+        let invalid = vec![vec![3.0, f32::INFINITY], vec![f32::NAN, 0.0]];
+        assert_eq!(l2_stats(&invalid), (2, 0, 2, None));
+
+        let mut mixed = invalid;
+        mixed.push(vec![6.0, 8.0]);
+        mixed.push(vec![1.0]);
+        assert_eq!(l2_stats(&mixed), (2, 1, 2, Some((10.0, 10.0, 10.0, 0.0))));
+    }
 }
